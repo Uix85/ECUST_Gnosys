@@ -1,0 +1,1 @@
+../../reader/ai_processing/engines/semantic_chapter/prompt/semantic_chapter_v1.2.txt

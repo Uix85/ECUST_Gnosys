@@ -1,0 +1,1 @@
+../../reader/ai_processing/engines/holistic_chapter/prompt/holistic_chapter_v1.3.txt
