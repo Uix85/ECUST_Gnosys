@@ -85,7 +85,7 @@ def _spine_order(book_id: str, chapter_idx: int) -> int | None:
     所以不能直接用 chapter_idx 去查 chapters 表。
     """
     try:
-        from book_service import load_book_cached, _get_toc_pages, _build_chapters
+        from reader.book_service import load_book_cached, _get_toc_pages, _build_chapters
         book = load_book_cached(book_id)
         pages = _get_toc_pages(book_id, book)
         chapters = _build_chapters(pages)
