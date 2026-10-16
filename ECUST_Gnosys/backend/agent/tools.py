@@ -1,6 +1,7 @@
 """书内阅读工具，供段落 Agent 按需调用。"""
 
 import json
+import re
 
 from agent.book import (
     book_db,
@@ -16,6 +17,54 @@ def _tool(
     name: str, description: str, properties: dict, required: list[str], handler
 ) -> ToolSpec:
     return ToolSpec(name, description, properties, handler, required)
+
+
+def _chapter_layer_row(db, book_int_id: int, chapter_idx: int, book_id: str):
+    """取某逻辑章的 chapter_layer。
+
+    注意：chapter_layer 是按 chapters.spine_order 存的，而逻辑章索引是阅读器切章的结果，
+    两者可能错位 —— 所以用该章的 start_page 反查 spine_order（沿用原 read_notes 的做法）。
+    """
+    try:
+        from reader.book_service import load_book_cached, _get_toc_pages, _build_chapters
+
+        book = load_book_cached(book_id)
+        pages = _get_toc_pages(book_id, book)
+        chapters = _build_chapters(pages)
+        start_page = chapters[chapter_idx].get("start_page")
+        spine = (
+            pages[start_page].get("spine_order")
+            if start_page is not None and start_page < len(pages)
+            else None
+        )
+        if spine is None:
+            return None
+        return db.execute(
+            "SELECT cl.content, cl.model_version, cl.updated_at FROM chapter_layer cl "
+            "JOIN chapters ch ON ch.id=cl.chapter_id WHERE ch.book_id=? AND ch.spine_order=?",
+            (book_int_id, spine),
+        ).fetchone()
+    except (IndexError, TypeError, KeyError):
+        return None
+
+
+def _sub_terms(term: str) -> list[str]:
+    """复合术语的子词候选（仅用于精确检索落空时的兑底）。
+
+    「自在自为」→「自在」「自为」，因为书里带常把它们拆开写。
+    命中结果会标 `expanded: true`，免得模型把子词命中当成整词逐字出现。
+    """
+    parts = [p for p in re.split(r"[、，,和与及／/]", term) if len(p) >= 2]
+    if len(parts) > 1:
+        return parts
+    if len(term) >= 4 and len(term) % 2 == 0:
+        half = len(term) // 2
+        return [term[:half], term[half:]]
+    return []
+
+
+# 省略号：引文里用省略号截断是常态，不该因此判核验失败（不然模型会反复重试同一句）
+_ELLIPSIS_RE = re.compile(r"…+|\.{3,}|⋯+|\*{2,}")
 
 
 def book_reading_tools(book_id: str, ledger: dict[tuple[int, int], list[str]]) -> dict:
@@ -52,36 +101,46 @@ def book_reading_tools(book_id: str, ledger: dict[tuple[int, int], list[str]]) -
         if not book:
             raise ValueError("当前书籍不可用")
         chapters = _build_chapters(_get_toc_pages(book_id, book))
-        needle = normalize_text(query)
-        hits = []
-        for chapter_idx in range(len(chapters)):
-            chapter, paragraphs, _ = logical_paragraphs(book_id, chapter_idx)
-            for para in paragraphs:
-                pos = normalize_text(para["text"]).find(needle)
-                if pos < 0:
-                    continue
-                raw_pos = para["text"].find(query)
-                start = max(0, raw_pos - 400) if raw_pos >= 0 else 0
-                end = min(len(para["text"]), start + 1200)
-                excerpt = para["text"][start:end]
-                ledger.setdefault((chapter_idx, para["paragraph_index"]), []).append(
-                    excerpt
-                )
-                hits.append(
-                    {
-                        "material_type": "original_text",
-                        "reference": {
-                            "chapter_idx": chapter_idx,
-                            "paragraph_index": para["paragraph_index"],
-                            "fingerprint": para["fingerprint"],
-                        },
-                        "chapter_title": chapter.get("title", ""),
-                        "excerpt": excerpt,
-                        "truncated": start > 0 or end < len(para["text"]),
-                    }
-                )
-                if len(hits) >= limit:
-                    return hits
+
+        def collect(needle: str, expanded: bool, out: list) -> bool:
+            """扫全书找 needle；装满 limit 返回 True。命中的节选记入材料账本。"""
+            for chapter_idx in range(len(chapters)):
+                chapter, paragraphs, _ = logical_paragraphs(book_id, chapter_idx)
+                for para in paragraphs:
+                    if needle not in normalize_text(para["text"]):
+                        continue
+                    raw_pos = para["text"].find(query)  # 摘录取原词位置；子词命中时为 -1
+                    start = max(0, raw_pos - 400) if raw_pos >= 0 else 0
+                    end = min(len(para["text"]), start + 1200)
+                    excerpt = para["text"][start:end]
+                    ledger.setdefault((chapter_idx, para["paragraph_index"]), []).append(
+                        excerpt
+                    )
+                    out.append(
+                        {
+                            "material_type": "original_text",
+                            "reference": {
+                                "chapter_idx": chapter_idx,
+                                "paragraph_index": para["paragraph_index"],
+                                "fingerprint": para["fingerprint"],
+                            },
+                            "chapter_title": chapter.get("title", ""),
+                            "excerpt": excerpt,
+                            "truncated": start > 0 or end < len(para["text"]),
+                            "matched": needle,
+                            "expanded": expanded,
+                        }
+                    )
+                    if len(out) >= limit:
+                        return True
+            return False
+
+        hits: list[dict] = []
+        if not collect(normalize_text(query), False, hits):
+            # 精确搜不到时，试子词（复合术语常被拆开写）
+            for sub in _sub_terms(query):
+                if collect(normalize_text(sub), True, hits):
+                    break
         return hits
 
     async def read_paragraph_tool(args):
@@ -132,31 +191,7 @@ def book_reading_tools(book_id: str, ledger: dict[tuple[int, int], list[str]]) -
         book_layer = db.execute(
             "SELECT content FROM book_layer WHERE book_id=?", (book_row["id"],)
         ).fetchone()
-        chapter_layer = None
-        try:
-            from reader.book_service import (
-                load_book_cached,
-                _get_toc_pages,
-                _build_chapters,
-            )
-
-            book = load_book_cached(book_id)
-            pages = _get_toc_pages(book_id, book)
-            chapters = _build_chapters(pages)
-            start_page = chapters[ci].get("start_page")
-            spine_order = (
-                pages[start_page].get("spine_order")
-                if start_page is not None and start_page < len(pages)
-                else None
-            )
-            if spine_order is not None:
-                chapter_layer = db.execute(
-                    "SELECT cl.content FROM chapter_layer cl JOIN chapters ch ON ch.id=cl.chapter_id "
-                    "WHERE ch.book_id=? AND ch.spine_order=?",
-                    (book_row["id"], spine_order),
-                ).fetchone()
-        except (IndexError, TypeError):
-            chapter_layer = None
+        chapter_layer = _chapter_layer_row(db, book_row["id"], ci, book_id)
         row = db.execute(
             "SELECT short, detail, sentences, state FROM agent_notes "
             "WHERE chapter_idx=? AND paragraph_index=? AND fingerprint=? AND state IN ('published','accepted') "
@@ -234,26 +269,119 @@ def book_reading_tools(book_id: str, ledger: dict[tuple[int, int], list[str]]) -
             "reference": reference,
         }
 
+    async def read_layer_note(args):
+        """单独读全书层 / 章节层（不截断）。
+
+        原 read_existing_note 把两层内容截到 8000 字混在一起返回，判断“这个术语全书什么位置”
+        时需要完整文本（概念层设计 §12.1）。返回内容标记为层解释，**不是原文证据**。
+        """
+        layer = (args.get("layer") or "").strip()
+        db = book_db(book_id)
+        book_row = db.execute("SELECT id FROM books LIMIT 1").fetchone()
+        if layer == "book":
+            ci = None
+            row = db.execute(
+                "SELECT content, model_version FROM book_layer WHERE book_id=?",
+                (book_row["id"],),
+            ).fetchone()
+        elif layer == "chapter":
+            ci = args.get("chapter_idx")
+            if not isinstance(ci, int):
+                raise ValueError("读章节层需要 chapter_idx")
+            row = _chapter_layer_row(db, book_row["id"], ci, book_id)
+        else:
+            raise ValueError("layer 只能是 book 或 chapter")
+        if not row:
+            return {
+                "material_type": "layer_note",
+                "layer": layer,
+                "chapter_idx": ci,
+                "available": False,
+                "content": "",
+                "note": "该层还没有内容（这不是错误，降级处理即可）",
+            }
+        return {
+            "material_type": "layer_note",
+            "layer": layer,
+            "chapter_idx": ci,
+            "available": True,
+            "content": row["content"] or "",
+            "model_version": row["model_version"] or "",
+            "note": "这是上一层的解释内容，不是原文证据，不得当作引文依据",
+        }
+
+    async def read_glossary(args):
+        """查本书术语规范里的书目知识（译名卡 / 前提追溯库）。
+
+        用途：判断“这个词是本书特别交代的术语，还是普通词”；卡内术语的解释必须与卡一致。
+        返回的是**书目知识，不是原文证据**（与 read_existing_note 同类，不引作引文）。
+        """
+        keyword = (args.get("keyword") or "").strip()
+        if not keyword:
+            raise ValueError("keyword 不能为空")
+        from agent.index import glossary_entries
+
+        key = normalize_text(keyword)
+        hits = []
+        for name, entry in glossary_entries().items():
+            n = normalize_text(name)
+            if n == key or (key and (key in n or n in key)):
+                hits.append({"term": name, "entry": entry})
+                if len(hits) >= 3:
+                    break
+        if not hits:
+            return {
+                "matched": False,
+                "keyword": keyword,
+                "note": "本书规范里没有这个词条 —— 它不是本书特别交代的术语，按普通词处理",
+            }
+        return {
+            "matched": True,
+            "entries": hits,
+            "note": "书目知识，不是原文证据；卡内术语的解释必须与卡一致",
+        }
+
     async def verify_quote(args):
         quote = args.get("quote")
         if not isinstance(quote, str) or not quote:
             raise ValueError("quote 不能为空")
         ci, pi = args.get("chapter_idx"), args.get("paragraph_index")
-        candidates = []
         if isinstance(ci, int) and isinstance(pi, int) and (ci, pi) in ledger:
             candidates = ledger[(ci, pi)]
         else:
             candidates = [source for sources in ledger.values() for source in sources]
-        matched = any(quote in source for source in candidates)
+        if any(quote in source for source in candidates):
+            return {
+                "exact_match": True,
+                "mode": "exact",
+                "checked_sources": len(candidates),
+                "quote": quote,
+                "note": "与本任务已读取原文逐字一致",
+            }
+        # 省略号截断是写引文的常态（“A……B”），分段核验而不是直接判失败 ——
+        # 否则模型会反复重试同一句引文，把预算烧光（L3 已实测过这个症状）。
+        segments = [s for s in _ELLIPSIS_RE.split(quote) if s.strip()]
+        if len(segments) > 1:
+            missing = [s for s in segments if not any(s in source for source in candidates)]
+            return {
+                "exact_match": not missing,
+                "mode": "ellipsis_split",
+                "segments_checked": len(segments),
+                "missing": missing[:3],
+                "checked_sources": len(candidates),
+                "quote": quote,
+                "note": (
+                    "省略号分段均逐字命中"
+                    if not missing
+                    else "省略号分段有未命中项：请照抄原文，或删掉未命中的片段"
+                ),
+            }
         return {
-            "exact_match": matched,
+            "exact_match": False,
+            "mode": "none",
             "checked_sources": len(candidates),
             "quote": quote,
-            "note": (
-                "只能确认与本任务已读取原文逐字一致"
-                if matched
-                else "引文不在本任务已读取原文中"
-            ),
+            "note": "引文不在本任务已读取原文中",
         }
 
     tools = [
@@ -289,6 +417,25 @@ def book_reading_tools(book_id: str, ledger: dict[tuple[int, int], list[str]]) -
             },
             ["chapter_idx", "paragraph_index"],
             read_notes,
+        ),
+        _tool(
+            "read_layer_note",
+            "单独读取全书层或章节层的已有内容（上层解释，不是原文证据）。",
+            {
+                "layer": {"type": "string"},
+                "chapter_idx": {"type": "integer"},
+            },
+            ["layer"],
+            read_layer_note,
+        ),
+        _tool(
+            "read_glossary",
+            "查本书术语规范里的词条（译名卡/前提追溯库），判断是否本书术语。",
+            {
+                "keyword": {"type": "string"},
+            },
+            ["keyword"],
+            read_glossary,
         ),
         _tool(
             "verify_source_quote",
