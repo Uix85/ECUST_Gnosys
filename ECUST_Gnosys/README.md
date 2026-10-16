@@ -1,56 +1,79 @@
-# reader 3
+# ECUST Gnosys
 
-A lightweight, self-hosted EPUB reader that lets you read through EPUB books one chapter at a time. This makes it very easy to copy paste the contents of a chapter to an LLM, to read along. Basically - get epub books (e.g. [Project Gutenberg](https://www.gutenberg.org/) has many), open them up in this reader, copy paste text around to your favorite LLM, and read together and along.
+一个本地运行的 EPUB 阅读器，提供章节阅读、阅读笔记和段落级 AI 解释。书籍与阅读记录保存在本机，网页服务默认监听 `127.0.0.1:8123`。
 
-This project was 90% vibe coded just to illustrate how one can very easily [read books together with LLMs](https://x.com/karpathy/status/1990577951671509438). I'm not going to support it in any way, it's provided here as is for other people's inspiration and I don't intend to improve it. Code is ephemeral now and libraries are over, ask your LLM to change it in whatever way you like.
+## 快速开始
 
-## Usage
-
-The project uses [uv](https://docs.astral.sh/uv/). So for example, download [Dracula EPUB3](https://www.gutenberg.org/ebooks/345) to this directory as `dracula.epub`, then:
+需要 Python 3.10+ 和 [uv](https://docs.astral.sh/uv/)。在项目根目录运行：
 
 ```bash
-uv run backend/reader/import_epub.py dracula.epub
-```
-
-This creates `books/dracula_data`, which registers the book to your local library. We can then run the server:
-
-```bash
+uv sync
 uv run server.py
 ```
 
-And visit [localhost:8123](http://localhost:8123/) to see your current Library. You can easily add more books, or delete them from your library by deleting the folder. It's not supposed to be complicated or complex.
-
-## License
-
-MIT
-## Project Layout
-
-```text
-server.py               项目根目录启动入口（应用和书库路由在 backend/api/server.py）
-backend/server.py       兼容启动入口
-backend/api/            FastAPI 应用装配与书库 HTTP 路由
-backend/reader/         EPUB 导入、阅读服务、章节处理与四层笔记接口
-backend/agent/          Agent 流程模块（runs.py、engine.py、tasks.py、tools.py、book.py、config.py）
-backend/db/             SQLite 连接与 schema
-frontend/templates/     Jinja 页面
-frontend/static/        浏览器静态资源
-scripts/                人手动运行的自检与批处理脚本
-books/                  本地书库；每本书的数据仍在 <书名>_data/book.db
-docs/                   规范、项目材料、章节草稿与原文节选
-```
-Run everything from the repo root:
+打开 <http://127.0.0.1:8123/>。可以在书库页面上传 EPUB/TXT，也可以从命令行导入 EPUB：
 
 ```bash
-uv run server.py                                            # 起服务
-uv run scripts/check_semantic_para.py "<books 下的书目录名>"   # 语义层数据对账
-uv run scripts/check_agent_endpoint.py                      # 端点自检
-uv run scripts/run_batch.py -n 2                            # Agent 冒烟（2 段）
+uv run backend/reader/import_epub.py "/path/to/book.epub"
 ```
 
-## 段落语义 Agent
+导入的书籍保存在 `books/<书名>_data/`，每本书的数据位于该目录的 `book.db`。
 
-阅读页可以为单段生成解释，也可以按章节批量生成。首轮生成后会由新上下文独立复核；通过的解释自动出现在正文旁，未通过的候选稿保存在“待核稿”中，须由读者采纳。任务记录保存在每本书的 `book.db`。
+## AI 配置
 
-首次配置时，将 `.env.example` 复制为 `.env`，将 `.env.secrets.example` 复制为 `.env.secrets`，并在后者填写 `AGENT_API_KEY`。`.env.secrets` 已加入忽略规则。模型接口使用兼容 Chat Completions 工具调用的服务；默认模型为 `gpt-4.1-mini`。端点、模型、请求超时和每段执行预算可在 `.env` 中调整。
+阅读器本身可以先启动；使用段落 Agent 前，需要配置兼容 OpenAI Chat Completions 工具调用的模型服务。将 `.env.example` 复制为 `.env`，按需修改模型和服务地址，再在项目根目录创建 `.env.secrets`：
 
-默认每本书最多同时处理两个段落；每段最多 12 次模型请求、20 次工具调用和 5 分钟。启动后可在阅读页查看进度、取消、重试失败段落和审阅待核稿。未结束任务会在服务重启后标记为中断。
+```dotenv
+AGENT_API_KEY=你的_API_密钥
+```
+
+`.env.secrets` 已加入 Git 忽略规则。配置读取优先级为：进程环境变量、`.env.secrets`、`.env`。`.env.example` 中可调整的选项包括：
+
+| 变量 | 用途 |
+| --- | --- |
+| `AGENT_API_BASE_URL` | Chat Completions 服务地址 |
+| `AGENT_MODEL` | 使用的模型名称 |
+| `AGENT_REQUEST_TIMEOUT` | 单次请求超时秒数 |
+| `AGENT_MAX_REQUESTS` | 每段解释的模型请求上限 |
+| `AGENT_MAX_TOOL_CALLS` | 每段解释的工具调用上限 |
+| `AGENT_RUN_TIMEOUT` | 每段任务的最长运行秒数 |
+| `AGENT_MAX_RETRIES` | 请求失败后的重试次数 |
+| `AGENT_MAX_PARALLEL` | 同时运行的段落任务数 |
+| `AGENT_SESSION_ID` | 可选的 `x-opencode-session` 请求头 |
+
+## Agent 执行流程
+
+`backend/agent/runs.py` 保留批次调度和段落任务的 `for` 循环，负责启动、取消和等待任务。每段的生成、复核、必要时修订及结果保存由 `run_service.py` 处理；`engine.py` 使用 OpenAI Agents SDK 的 `Runner.run` 执行单个 Agent 的模型与工具调用流程。
+
+复核通过的解释会发布到正文旁；未通过的结果会保存在待核稿中，供读者审阅和采纳。任务状态和进度事件也保存在对应书籍的数据库里。
+
+## 目录结构
+
+```text
+server.py                         根目录启动入口
+backend/
+  api/server.py                   FastAPI 应用、网页路由和服务装配
+  agent/
+    runs.py                       批次调度、取消和清晰的段落循环
+    run_service.py                单段流程、运行状态与结果持久化
+    engine.py                     Agents SDK 执行、预算和取消控制
+    tasks.py                      Agent 任务定义、提示词和校验
+    tools.py                      阅读与原文核对工具
+    book.py                       Agent 使用的书籍和段落数据
+    config.py                     环境配置
+    skills/book-reading/          阅读 Agent 使用的 Skill
+    run_api.py                    Agent HTTP 接口
+  reader/                         EPUB 导入、阅读服务、章节处理和数据模型
+  db/schema.py                    SQLite 表结构和连接管理
+frontend/
+  templates/                      阅读器网页模板
+  static/                          浏览器静态资源
+books/                             本地导入的书籍及其数据库
+docs/                              项目规范、研究材料和章节文档
+```
+
+`backend/server.py` 是兼容启动入口；日常启动使用项目根目录的 `server.py`。
+
+## 许可证
+
+[MIT](LICENSE)
