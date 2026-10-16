@@ -61,7 +61,7 @@ class Decision:
 def _norm_index(text: str) -> tuple[str, list[int]]:
     """规范化文本 + 「规范化下标 → 原文下标」映射（把命中的位置还原成原文坐标）。
 
-    与 agent_book.normalize_text 同规则（NFKC + 去空白 + 小写），但额外保留下标映射，
+    与 agent/book.py.normalize_text 同规则（NFKC + 去空白 + 小写），但额外保留下标映射，
     否则去空白之后位置就和原文对不上了。
     """
     out, idx = [], []

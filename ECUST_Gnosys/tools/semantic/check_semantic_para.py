@@ -22,7 +22,7 @@ from api.server import _get_chapter_slice
 from reader.auxiliary_reading import needs_semantic
 from agent.book import split_sentences
 
-# 分句规则统一取自 agent_book.split_sentences（与前端 splitSentences 同规则），
+# 分句规则统一取自 agent.book.split_sentences（与前端 splitSentences 同规则），
 # 本地不再另写一份 —— 三处分句器漂移过一次（词内 ASCII 句点），代价是逐句解释错位。
 
 
