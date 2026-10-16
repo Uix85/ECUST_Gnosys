@@ -1,0 +1,22 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Custom
+.env
+.env.secrets
+
+# SQLite WAL 模式运行时文件（非真实数据，不应入库）
+*.db-shm
+*.db-wal
+
+# 临时产物目录：内容全部忽略，只保留说明
+/tmp/*
+!/tmp/TEMP_README.md

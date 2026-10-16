@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ book_title }} · 全书层</title>
+    <style>
+        /* 本页只作阅读页右侧抽屉（#notes-drawer）里的展示面板：
+           纯只读的全书层（L1），没有层级切换、没有编辑、没有导航。 */
+        body { margin:0; height:100vh; overflow:hidden; background:#fbfbfc; color:#33383f;
+               font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",Roboto,Helvetica,Arial,sans-serif;
+               display:flex; flex-direction:column; }
+        /* 顶部收回条：只在被阅读页抽屉内嵌时出现（收回键放在全书层内部，不外凸） */
+        .nb-bar { display:none; flex-shrink:0; align-items:center; height:34px; padding:0 8px; background:#f7f9fb; border-bottom:1px solid #eef1f4; }
+        body.embedded .nb-bar { display:flex; }
+        .nb-collapse { display:flex; align-items:center; justify-content:center; width:28px; height:24px; padding:0;
+                       background:#fff; border:1px solid #e3e7ea; border-radius:6px; color:#7a848d; cursor:pointer; }
+        .nb-collapse:hover { background:#e7f1fa; border-color:#bcdcf5; color:#1a5276; }
+        .nb-collapse svg { width:14px; height:14px; }
+        .nb-scroll { flex:1; min-height:0; overflow-y:auto; }
+        .nb-doc { max-width:44em; margin:0 auto; padding:24px 26px 72px; }
+        .nb-doc.md { font-size:.95em; line-height:1.9; word-break:break-word; }
+        .nb-doc p { margin:.75em 0; }
+        .nb-doc h1, .nb-doc h2, .nb-doc h3, .nb-doc h4, .nb-doc h5, .nb-doc h6 { color:#1a5276; line-height:1.5; margin:1.3em 0 .5em; font-weight:600; }
+        .nb-doc h1 { font-size:1.3em; }
+        .nb-doc h2 { font-size:1.15em; }
+        .nb-doc h3 { font-size:1.05em; }
+        .nb-doc h4, .nb-doc h5, .nb-doc h6 { font-size:.98em; }
+        .nb-doc > :first-child { margin-top:0; }
+        .nb-doc strong { color:#1a5276; }
+        .nb-doc ul, .nb-doc ol { margin:.5em 0; padding-left:1.5em; }
+        .nb-doc li { margin:.3em 0; }
+        .nb-doc blockquote { margin:.8em 0; padding:.5em .9em; border-left:3px solid #bcdcf5; background:#f4f9fd;
+                             border-radius:0 6px 6px 0; color:#41505d; }
+        .nb-doc code { background:#eef3f7; border-radius:4px; padding:0 4px; font-size:.92em; }
+        .nb-doc pre { background:#f6f8fa; border:1px solid #e9ecef; border-radius:8px; padding:12px 14px; overflow-x:auto; }
+        .nb-doc pre code { background:none; padding:0; }
+        .nb-doc a { color:#2d6cdf; }
+        .nb-doc hr { border:none; border-top:1px solid #e9ecef; margin:1.4em 0; }
+        .nb-doc img { max-width:100%; height:auto; border-radius:6px; }
+        .nb-empty { color:#9aa4ae; font-size:.9em; text-align:center; margin-top:34vh; }
+    </style>
+</head>
+<body>
+
+{% include 'markdown_render.js' %}
+{% include 'scrollbar.html' %}
+
+<div class="nb-bar">
+    <button class="nb-collapse" id="nb-collapse" title="收起（回到正文）"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+</div>
+<div class="nb-scroll"><div class="nb-doc" id="nb-doc">加载中…</div></div>
+
+<script>
+var BOOK_ID = {{ book_id | tojson }};
+
+// 收起键：只在被阅读页抽屉内嵌时可用，直接调用阅读页的 closeNotesDrawer()
+// （本页单独打开时没有这个条，仍然只是纯展示）
+(function initCollapse() {
+    var embedded = window.parent && window.parent !== window && typeof window.parent.closeNotesDrawer === 'function';
+    if (!embedded) return;
+    document.body.classList.add('embedded');
+    document.getElementById('nb-collapse').addEventListener('click', function() {
+        window.parent.closeNotesDrawer();
+    });
+})();
+
+// 纯展示：只拉全书层（L1）内容并渲染 Markdown
+(async function loadBookLayer() {
+    var doc = document.getElementById('nb-doc');
+    try {
+        var r = await fetch('/api/layer/book/' + encodeURIComponent(BOOK_ID));
+        var d = await r.json();
+        if (d && d.content) {
+            doc.innerHTML = renderMarkdown(d.content);
+            doc.classList.add('md');
+        } else {
+            doc.textContent = '（暂无全书层内容）';
+            doc.classList.add('nb-empty');
+        }
+    } catch (e) {
+        doc.textContent = '加载失败';
+        doc.classList.add('nb-empty');
+    }
+})();
+</script>
+</body>
+</html>

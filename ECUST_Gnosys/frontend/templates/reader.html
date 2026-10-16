@@ -1,0 +1,2034 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ book.metadata.title }}</title>
+    <style>
+        body { margin:0; padding:0; display:flex; height:100vh; overflow:hidden; font-family:Georgia,serif; background:#fff; }
+
+        /* ── 展示栏（VSCode 侧边栏模式）：项目（目录 / 章节层…）上下排列，点击标题折叠，分隔条拖拽分高度 ── */
+        #side-wrap { position:relative; display:flex; flex-direction:column; flex-shrink:0; width:280px; min-width:0; transition:width .25s; margin-left:52px; }
+        #side-wrap.hidden { display:none; }
+
+        #panel { flex-grow:1; min-height:0; display:flex; flex-direction:column; background:#f8f9fa; border-right:1px solid #e9ecef; }
+        /* VSCode 布局：展开项平分剩余空间（仅目录展开时=一展到底），折叠项只留标题行、按文档流聚于顶部 */
+        .pv { display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+        .pv.open { flex:1 1 0; }
+        #panel .pv.collapsed { flex:none; }
+        .pv-header { flex-shrink:0; display:flex; align-items:center; gap:6px; height:30px; padding:0 10px; cursor:pointer; user-select:none; font-family:-apple-system,sans-serif; font-size:.82em; font-weight:bold; color:#495057; letter-spacing:.5px; background:#f1f3f5; border-bottom:1px solid #dee2e6; }
+        .pv-header:hover { color:#1a5276; background:#e7f1fa; }
+        .pv-chevron { width:16px; height:16px; flex-shrink:0; color:#868e96; transition:transform .15s ease; }
+        .pv-header:hover .pv-chevron { color:#1a5276; }
+        .pv.open > .pv-header .pv-chevron { transform:rotate(90deg); }
+        .pv-body { flex:1 1 0; min-height:0; overflow-y:auto; padding:12px 12px 16px; }
+        .pv.collapsed .pv-body { display:none; }
+
+        /* 项目间上下分隔条（VSCode「底部上拉」）：默认全透明不可见，悬停才显示；仅目录展开时存在 */
+        #pv-splitter { flex-shrink:0; height:5px; cursor:row-resize; }
+        #pv-splitter:hover { background:rgba(52,152,219,.25); }
+
+        /* 展示栏右缘拖拽调宽 */
+        #resizer { position:absolute; top:0; right:-3px; width:6px; height:100%; cursor:col-resize; z-index:120; transition:background .15s; }
+        #resizer:hover { background:rgba(52,152,219,.25); }
+
+        /* ── 笔记页抽屉（右侧）：点最右小方框开关，宽度固定不拖；收起键在全书层页面内部（.nb-collapse） ── */
+        #notes-drawer { position:fixed; top:0; right:0; height:100vh; width:0; display:none; background:#fff;
+                        border-left:1px solid #e9ecef; box-shadow:-2px 0 12px rgba(0,0,0,.06); z-index:150; }
+        #notes-drawer.open { display:block; }
+        #notes-frame { width:100%; height:100%; border:0; display:block; background:#fff; }
+        #notes-grip { position:fixed; top:50%; right:0; transform:translateY(-50%); width:22px; height:46px;
+                      display:flex; align-items:center; justify-content:center; background:rgba(255,255,255,.95);
+                      border:1px solid #dee2e6; border-right:0; border-radius:6px 0 0 6px; color:#6c757d;
+                      cursor:pointer; z-index:160; box-shadow:-1px 0 4px rgba(0,0,0,.05); transition:background .15s, color .15s; }
+        #notes-grip:hover { color:#1a5276; background:#e7f1fa; }
+        #notes-grip svg { width:14px; height:14px; }
+
+        /* ── 章节层面板 Markdown（展示栏内渲染）── */
+        .pv-md { line-height:1.6; font-size:.88em; color:#212529; word-break:break-word; }
+        .pv-md p { margin:.4em 0; }
+        .pv-md h1,.pv-md h2,.pv-md h3,.pv-md h4,.pv-md h5,.pv-md h6 { font-family:-apple-system,sans-serif; margin:.8em 0 .3em; color:#1a1a2e; }
+        .pv-md h1 { font-size:1.15em; } .pv-md h2 { font-size:1.08em; } .pv-md h3,.pv-md h4 { font-size:1em; }
+        .pv-md ul,.pv-md ol { margin:.3em 0; padding-left:1.4em; }
+        .pv-md li { margin:.15em 0; }
+        .pv-md code { background:#eef3f7; border-radius:3px; padding:0 3px; font-size:.92em; }
+        .pv-md pre { background:#eef3f7; border-radius:6px; padding:8px 10px; overflow-x:auto; margin:.4em 0; }
+        .pv-md pre code { background:none; padding:0; }
+        .pv-md a { color:#2d6cdf; }
+        .pv-md hr { border:none; border-top:1px solid #dee2e6; margin:.6em 0; }
+        .pv-md blockquote { margin:.4em 0; padding:2px 10px; border-left:3px solid #a5d8ff; color:#495057; }
+        .pv-empty { color:#adb5bd; font-size:.9em; }
+        /* 章标题随内容滚动，不做 sticky：浮空标题会遮住下面的正文（被反馈的问题） */
+        .pv-ch-title { font-family:-apple-system,sans-serif; font-size:.9em; font-weight:bold; color:#495057;
+                       margin:0 0 6px; padding-bottom:5px; border-bottom:1px solid #e9ecef; word-break:break-word; }
+
+        /* ── 章 ── */
+        .ch-item { margin-bottom:6px; }
+        .ch-row { display:flex; align-items:center; }
+        .ch-link { flex:1; text-decoration:none; color:#495057; font-size:.9em; font-weight:500; padding:5px 10px; border-radius:4px; line-height:1.35; font-family:-apple-system,sans-serif; cursor:pointer; }
+        .ch-link:hover { background:rgba(52,152,219,.08); }
+        .ch-link.active { background:#3498db; color:#fff; font-weight:bold; }
+        .ch-toggle { display:inline-grid; grid-template-columns:4px 4px; grid-template-rows:4px 4px; gap:3px; cursor:pointer; user-select:none; flex-shrink:0; opacity:.5; transition:opacity .15s; padding:6px 8px; margin-right:2px; align-self:center; }
+        .ch-toggle:hover { opacity:.8; }
+        .ch-toggle.open { opacity:1; }
+        .ch-toggle i { display:block; width:4px; height:4px; background:#495057; border-radius:1px; }
+        .ch-toggle.open i { background:#3498db; }
+
+        /* ── 节框 ── */
+        .section-box { border:1px solid #e9ecef; border-radius:6px; background:#fbfcfd; padding:4px 6px; margin:4px 0 8px 0; overflow:hidden; transition:max-height .2s,opacity .15s,padding .2s,margin .2s,visibility 0s linear 0s; visibility:visible; }
+        /* visibility 延迟到折叠动画结束再隐藏：防止折叠盒内的节链接残留命中区/键盘焦点（Tab+Enter 会误跳其它章） */
+        .section-box.collapsed { max-height:0!important; opacity:0; padding-top:0; padding-bottom:0; margin-top:0; margin-bottom:0; border-width:0; visibility:hidden; transition:max-height .2s,opacity .15s,padding .2s,margin .2s,visibility 0s linear .2s; }
+        .sec-link { display:block; flex:1; min-width:0; text-decoration:none; color:#4a5568; font-size:.85em; padding:4px 8px; border-radius:3px; line-height:1.35; font-family:-apple-system,sans-serif; cursor:pointer; }
+        .sec-link:hover { background:rgba(0,0,0,.03); color:#2d3748; }
+        .sec-link.active { color:#1a202c; font-weight:600; background:rgba(0,0,0,.045); }
+        .sec-link.d1 { padding-left:2px; }
+        .sec-link.d2 { padding-left:4px; font-size:.82em; }
+        .sec-link.d3 { padding-left:6px; font-size:.79em; }
+        .sec-link.d4 { padding-left:10px; font-size:.76em; }
+
+        /* ── 节内子级折叠 ── */
+        .sec-row { display:flex; align-items:center; }
+        .sec-toggle { width:20px; height:28px; flex-shrink:0; cursor:pointer; user-select:none; opacity:.35; transition:opacity .15s,transform .15s; font-size:18px; display:flex; align-items:center; justify-content:center; margin-right:2px; }
+        .sec-toggle:hover { opacity:.7; }
+        .sec-toggle.open { transform:rotate(90deg); }
+        .sec-kids { overflow:hidden; transition:max-height .2s,opacity .15s,visibility 0s linear 0s; visibility:visible; }
+        .sec-kids.collapsed { max-height:0!important; opacity:0; visibility:hidden; transition:max-height .2s,opacity .15s,visibility 0s linear .2s; }
+        /* 层级缩进：一级节标题与章标题对齐，每深一层缩进一个字符 */
+        .sec-row.d1 { padding-left:8px; }
+        .sec-row.d2 { padding-left:20px; }
+        .sec-row.d3 { padding-left:32px; }
+        .sec-row.d4 { padding-left:42px; }
+
+        #main { flex-grow:1; min-width:0; overflow-y:auto; overflow-x:hidden; position:relative; scroll-behavior:smooth; }
+        /* 正文左移：与目录栏的间距取“自由空间的 1/16”（比原来再小一半），把右侧尽量让给语义层备注；
+           窄窗保底留 24px */
+        #chapter-view { position:relative; max-width:700px; margin:0 auto 0 max(24px, calc((100% - 780px) / 16)); padding:40px 40px 120px; }
+        /* 目录栏收起时：正文不能贴到窗口最左（左侧固定边栏 52px 会压住它）→ 保底 160px */
+        body.no-sidebar #chapter-view { margin-left:max(160px, calc((100% - 780px) / 8)); }
+        .ch-title-bar { display:flex; align-items:center; gap:12px; font-family:-apple-system,sans-serif; font-size:1.6em; font-weight:bold; color:#1a1a2e; padding:16px 0 12px; margin-bottom:20px; border-bottom:2px solid #3498db; position:sticky; top:0; background:linear-gradient(180deg,#fff 70%,rgba(255,255,255,0)); z-index:40; backdrop-filter:blur(4px); }   /* z-index 高于语义备注(30)，低于概念弹窗(500)：备注不会盖住粘性标题栏 */
+        .ch-title-bar #ch-title { flex:1; min-width:0; word-break:break-word; }
+        #agent-controls { display:flex; flex-wrap:wrap; align-items:center; gap:5px; font-size:12px; font-weight:normal; }
+        #agent-controls select, #agent-controls button, #agent-run-panel button { font:12px -apple-system,sans-serif; padding:4px 6px; border:1px solid #ced4da; border-radius:4px; background:#fff; color:#495057; cursor:pointer; }
+        #agent-controls button { color:#1769aa; border-color:#a5d8ff; }
+        #agent-run-panel { display:none; position:sticky; top:68px; z-index:39; margin:-12px 0 16px; padding:7px 10px; border:1px solid #d0ebff; border-radius:5px; background:rgba(240,248,255,.96); font:12px/1.5 -apple-system,sans-serif; color:#345; }
+        #agent-run-panel button { margin-left:5px; }
+        #agent-pending-list { display:none; max-height:300px; overflow:auto; margin-top:7px; padding-top:7px; border-top:1px solid #d0ebff; }
+        .agent-pending-item { padding:7px 0; border-bottom:1px solid #dee2e6; }
+        .agent-pending-item pre { white-space:pre-wrap; font:12px/1.5 -apple-system,sans-serif; max-height:180px; overflow:auto; }
+        .sem-generate { position:absolute; left:calc(100% + 28px); top:.28em; z-index:4; font:12px -apple-system,sans-serif; color:#7b8794; }
+        .sem-generate button { border:0; padding:0; color:#567c98; background:transparent; cursor:pointer; font:inherit; }
+        .sem-generate button:hover { color:#1769aa; text-decoration:underline; }
+        .ch-content { line-height:1.8; font-size:1.15em; color:#212529; }
+        .ch-content p { margin-bottom:1.5em; text-align:justify; }
+        .ch-content img { max-width:100%; height:auto; display:block; margin:20px auto; }
+        .ch-content h1,.ch-content h2,.ch-content h3 { font-family:-apple-system,sans-serif; margin-top:1.5em; color:#333; scroll-margin-top:77px; }
+        .ch-content span[id] { scroll-margin-top:77px; }
+        .ch-content a { color:#2d6cdf; text-decoration:none; cursor:pointer; }
+        .ch-content a:hover { text-decoration:underline; }
+
+        #ch-loading { text-align:center; padding:60px; display:none; }
+        #ch-loading .spinner { display:inline-block; width:28px; height:28px; border:3px solid #e9ecef; border-top-color:#3498db; border-radius:50%; animation:spin .6s linear infinite; }
+        @keyframes spin { to{transform:rotate(360deg)} }
+
+        #ch-nav { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:16px; background:rgba(255,255,255,.95); border:1px solid #dee2e6; border-radius:24px; padding:8px 20px; box-shadow:0 2px 12px rgba(0,0,0,.06); z-index:20; font-family:-apple-system,sans-serif; font-size:.9em; }
+        #ch-nav button { border:none; background:none; cursor:pointer; font-size:1.1em; color:#495057; padding:4px 8px; border-radius:4px; }
+        #ch-nav button:hover { background:#f1f3f5; color:#3498db; }
+        #ch-nav span { color:#868e96; white-space:nowrap; }
+
+        /* ── 概念层：笔触开关（已移至左侧边栏）+ 选中高亮 + 悬停弹窗 ── */
+        .ch-content mark.concept-hl { background:#fff3bf; color:inherit; border-radius:2px; padding:0 1px; cursor:pointer; }
+        .ch-content mark.concept-hl:hover { background:#ffd43b; }
+        /* 概念弹窗：白底淡蓝边框，标题栏 + 右上角图标区（四角星跳转/图钉锁定/八方箭头拖动）+ 右下角拉伸（无大小边界） */
+        .semantic-pop { position:absolute; z-index:500; width:320px; height:400px; background:#fff; border:1px solid #a5d8ff; border-radius:8px; box-shadow:0 4px 16px rgba(0,0,0,.08); display:flex; flex-direction:column; font-family:-apple-system,sans-serif; font-size:.85em; }
+        .semantic-pop .sp-title { flex-shrink:0; padding:8px 88px 6px 12px; font-weight:bold; color:#1a1a2e; border-bottom:1px solid #eef3f7; font-size:.9em; word-break:break-all; }
+        .semantic-pop.dragging { opacity:.92; user-select:none; }
+        .semantic-pop .sp-pin { position:absolute; top:7px; right:28px; width:20px; height:20px; cursor:pointer; color:#6c757d; opacity:.5; z-index:2; display:flex; align-items:center; justify-content:center; }
+        .semantic-pop .sp-pin:hover { opacity:1; }
+        .semantic-pop .sp-pin.locked { opacity:1; }
+        .semantic-pop .sp-pin svg { width:13px; height:13px; fill:currentColor; }
+        .semantic-pop .sp-move { position:absolute; top:7px; right:4px; width:20px; height:20px; color:#6c757d; opacity:.5; z-index:2; display:flex; align-items:center; justify-content:center; }
+        .semantic-pop .sp-move:hover { opacity:1; }
+        .semantic-pop .sp-move svg { width:15px; height:15px; fill:currentColor; }
+        .semantic-pop .sp-body { flex:1; overflow-y:auto; padding:10px 12px; line-height:1.6; color:#2b4a63; word-break:break-word; overscroll-behavior:contain; }
+        .semantic-pop .sp-body p { margin:.35em 0; }
+        .semantic-pop .sp-body h1, .semantic-pop .sp-body h2, .semantic-pop .sp-body h3,
+        .semantic-pop .sp-body h4, .semantic-pop .sp-body h5, .semantic-pop .sp-body h6 { margin:.6em 0 .3em; font-size:1.05em; color:#1a1a2e; }
+        .semantic-pop .sp-body ul, .semantic-pop .sp-body ol { margin:.3em 0; padding-left:1.3em; }
+        .semantic-pop .sp-body li { margin:.15em 0; }
+        .semantic-pop .sp-body code { background:#eef3f7; border-radius:3px; padding:0 3px; font-size:.92em; }
+        .semantic-pop .sp-body pre { background:#eef3f7; border-radius:6px; padding:8px 10px; overflow-x:auto; margin:.5em 0; }
+        .semantic-pop .sp-body pre code { background:none; padding:0; }
+        .semantic-pop .sp-body a { color:#2d6cdf; }
+        .semantic-pop .sp-body hr { border:none; border-top:1px solid #dee2e6; margin:.6em 0; }
+        .semantic-pop .sp-resize { position:absolute; right:0; bottom:0; width:18px; height:18px; cursor:nwse-resize; }
+        .semantic-pop .sp-resize::after { content:''; position:absolute; right:3px; bottom:3px; width:8px; height:8px; border-right:2px solid #a5d8ff; border-bottom:2px solid #a5d8ff; }
+
+        /* ── 语义层（段落级）：段落右栏灰字解释 ──
+           简短解释顶端对齐段落顶部；与下一条解释临界处灰线截断（悬停浮现）；
+           点击展开「整段详细解释 + 逐句解释」，悬停逐句解释 → 正文对应句高亮 */
+        .sem-para { display:block; position:relative; }
+        /* 宽度由 layout() 按右侧可用宽度自适应；超出部分截断，临界处只画一条浅灰下栏线 */
+        /* 备注文字：字距/行距都比正文紧一些（与正文区分，也少占竖向空间） */
+        /* top 先给个兜底值（.28em ≈ 正文 1.8 行高 vs 备注 1.55 行高的半行距差），
+           运行时 layout() 再逐个量测微调 → 首行文字顶端对齐段落首行 */
+        .sem-note { position:absolute; top:.28em; left:100%; margin-left:28px; width:300px; display:block;
+                    font-family:-apple-system,sans-serif; font-size:.72em; font-weight:normal;
+                    line-height:1.55; letter-spacing:-.15px; white-space:pre-line;
+                    color:#8b9098; cursor:pointer; }
+        .sem-note.clipped { overflow:hidden; }
+        /* 截断处 / 浮现内容底线：蓝色（不论简短解释还是具体解释） */
+        .sem-note::after { content:''; position:absolute; left:0; right:0; bottom:0; height:1px; background:#4da3d6; display:none; }
+        .sem-note.clipped::after { display:block; }
+        .sem-note.revealed { overflow:visible; max-height:none!important; z-index:30; }
+        .sem-note.clipped.revealed { background:#fff; }   /* 浮现时加白底板（无边框、无阴影）：避免与下方备注文字交错 */
+        /* 具体解释：左=整段详细解释（窄，约 38%）、右=逐句解释（宽）；右侧空间不够时上下排列 */
+        .sem-note .sn-detail { display:flex; align-items:flex-start; gap:14px; }
+        .sem-note .sn-left { flex:0 0 38%; }
+        .sem-note .sn-right { flex:1 1 auto; }
+        .sem-note.stacked .sn-detail { flex-direction:column; gap:10px; }
+        .sem-note.stacked .sn-detail > * { flex:0 0 auto; }
+        .sem-note .sn-item { display:block; margin-bottom:.45em; }
+        /* 悬停句解释：灰色字体阴影（不用底色、不用蓝色；蓝色只留给正文对应句） */
+        .sem-note .sn-item:hover { text-shadow:0 1px 2px rgba(120,125,135,.55); }
+        /* 悬停逐句解释：正文对应句蓝色 + 淡底（只改字色在长段里看不出来） */
+        .ch-content span.sem-sen-hl { color:#1b6fb0; background:#e6f2fb; border-radius:2px; box-shadow:0 0 0 1px #cfe6f7; }
+        /* 位数与切句不吻合（宁可指整段，也不指错句）：整段淡底提示 */
+        .ch-content span.sem-sen-soft { background:#f4f7fa; }
+        .ch-content span.sem-sen-loose { color:#5b7b93; }
+    </style>
+</head>
+<body>
+
+<script>window.BROWSER_BOOK_ID = {{ book_id | tojson }}; window.BROWSER_BOOK_TITLE = {{ book.metadata.title | tojson }}; window.BROWSER_IS_READER = true;</script>
+{% include 'browser_bar.html' %}
+{% include 'markdown_render.js' %}
+{% include 'scrollbar.html' %}
+
+<div id="side-wrap">
+    <div id="panel">
+        <!-- 项目：目录（顶部，默认展开 = 一展到底） -->
+        <section class="pv open" id="pv-toc">
+            <div class="pv-header" title="点击折叠 / 展开"><svg class="pv-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="pv-title">目 录</span></div>
+            <div class="pv-body"><div id="toc-tree"></div></div>
+        </section>
+        <div id="pv-splitter" title="拖动调整目录高度（拖到顶部自动折叠）"></div>
+        <!-- 项目：章节层（默认折叠；内容来自 /api/layer/chapter/，随当前章刷新） -->
+        <section class="pv collapsed" id="pv-book">
+            <div class="pv-header" title="点击折叠 / 展开"><svg class="pv-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="pv-title">章节层</span></div>
+            <div class="pv-body"><div class="pv-md" id="pv-book-content"><span class="pv-empty">加载中…</span></div></div>
+        </section>
+    </div>
+    <div id="resizer" title="拖动调整栏宽"></div>
+</div>
+
+<div id="main">
+    <div id="chapter-view">
+        <div class="ch-title-bar" id="ch-title-bar">
+            <span id="ch-title">{{ chapter_title }}</span>
+            <div id="agent-controls">
+                <select id="agent-mode" aria-label="已有解释处理方式"><option value="fill_missing">补齐空白</option><option value="overwrite">覆盖已有</option></select>
+                <select id="agent-spec" aria-label="语义规范"><option value="general">通用规范</option><option value="hegel_helin">黑格尔贺麟译本</option></select>
+                <button type="button" onclick="createChapterRun()">生成本章解释</button>
+            </div>
+        </div>
+        <div id="agent-run-panel"><span id="agent-run-text"></span><button id="agent-cancel" type="button" onclick="cancelAgentRun()">取消</button><button id="agent-retry" type="button" onclick="retryAgentRun()">重试失败段落</button><button id="agent-pending-toggle" type="button" onclick="toggleAgentPending()">查看待核稿</button><div id="agent-pending-list"></div></div>
+        <div class="ch-content" id="ch-content">{{ chapter_content | safe }}</div>
+    </div>
+    <div id="ch-loading"><div class="spinner"></div></div>
+</div>
+
+<div id="ch-nav">
+    <button id="ch-nav-prev" onclick="goChapter(-1)" title="上一章">&#9664;</button>
+    <span id="ch-nav-label"></span>
+    <button id="ch-nav-next" onclick="goChapter(1)" title="下一章">&#9654;</button>
+</div>
+
+<!-- 笔记页开关：右侧小方框点一下拉出（宽度固定）；收起键在全书层页面内部 -->
+<div id="notes-drawer"><iframe id="notes-frame" title="全书层"></iframe></div>
+<div id="notes-grip" title="点击展开全书层"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3L5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+
+<script>
+var BOOK_ID = "{{ book_id }}";
+var TOTAL = {{ total_chapters }};
+var currentChapter = {{ chapter_idx }};
+
+{% macro toc_json(items) %}
+[{% for item in items %}{
+    "title": {{ item.title | tojson }},
+    "href": {{ item.href | tojson }},
+    "children": {{ toc_json(item.children) if item.children else '[]' }}
+}{% if not loop.last %},{% endif %}{% endfor %}]
+{% endmacro %}
+var tocTree = {{ toc_json(heading_toc) }};
+var anchorMap = {{ anchor_map | tojson }};  // anchor id → 章节索引（正文内超链接跳转）
+
+var mainEl = document.getElementById('main');
+
+// ── 构建 TOC ──
+function buildToc() {
+    var root = document.getElementById('toc-tree');
+    root.innerHTML = '';
+    for (var i = 0; i < tocTree.length; i++) {
+        root.appendChild(buildChapter(tocTree[i], i));
+    }
+}
+
+function buildChapter(ch, idx) {
+    var div = document.createElement('div');
+    div.className = 'ch-item';
+
+    var hasKids = ch.children && ch.children.length > 0;
+
+    // 节框先建（仅有子节时创建，避免无子节的章下方出现空框）；
+    // 先建是为了让下方 toggle.onclick 能引用到 box，追加放在标题行之后
+    var box = null;
+    if (hasKids) {
+        box = document.createElement('div');
+        box.className = 'section-box collapsed';
+        buildSections(ch.children, box, idx, 1, null);
+    }
+
+    var row = document.createElement('div');
+    row.className = 'ch-row';
+
+    var toggle = document.createElement('span');
+    toggle.className = 'ch-toggle';
+    toggle.style.visibility = hasKids ? 'visible' : 'hidden';
+    toggle.onclick = makeFoldHandler(box, toggle);
+    // 四个小方块
+    for (var s = 0; s < 4; s++) { var sq = document.createElement('i'); toggle.appendChild(sq); }
+    row.appendChild(toggle);
+
+    var link = document.createElement('a');
+    link.className = 'ch-link';
+    link.textContent = ch.title;
+    link.href = '#';
+    row.appendChild(link);
+    div.appendChild(row);
+
+    if (box) div.appendChild(box);   // 节框在章标题行下方
+    if (box) box._toggleEl = toggle;
+    // 单击章标题直接跳转（展开/固定由左侧折叠按钮负责：手动展开 = 固定，不被自动折叠）
+    bindLinkNav(link, function() { loadChapter(idx); });
+    // 存引用用于折叠（无子节 = null，引用处均已判空）
+    div._sectionBox = box;
+    div._toggle = toggle;
+
+    return div;
+}
+
+function buildSections(children, container, chapterIdx, depth, parentEl) {
+    for (var i = 0; i < children.length; i++) {
+        var s = children[i];
+        var hasKids = s.children && s.children.length > 0;
+
+        // 行容器：节链接 + 折叠按钮
+        var row = document.createElement('div');
+        row.className = 'sec-row d' + depth;
+
+        // 折叠按钮（有子节时显示 ▸）
+        var stoggle = document.createElement('span');
+        stoggle.className = 'sec-toggle';
+        stoggle.textContent = hasKids ? '\u25B8' : '';
+        stoggle.style.visibility = hasKids ? 'visible' : 'hidden';
+        row.appendChild(stoggle);
+
+        var link = document.createElement('a');
+        link.className = 'sec-link d' + depth;
+        link.textContent = s.title;
+        link.href = '#';
+        let anchor = (s.href || '').split('#')[1] || '';   // let：块级作用域，闭包各自捕获
+        link.setAttribute('data-anchor', anchor);
+        link._parentSection = parentEl;
+        let doSectionNav = function() {
+            if (currentChapter !== chapterIdx) {
+                loadChapter(chapterIdx, 'top', anchor);
+            } else {
+                scrollToSection(anchor);
+            }
+        };
+        row.appendChild(link);
+        container.appendChild(row);
+
+        // 子节容器（默认折叠）
+        if (hasKids) {
+            let kids = document.createElement('div');   // let：块级作用域，闭包各自捕获
+            kids.className = 'sec-kids collapsed';
+            kids._toggleEl = stoggle;
+            stoggle.onclick = makeFoldHandler(kids, stoggle);
+            buildSections(s.children, kids, chapterIdx, depth + 1, link);
+            container.appendChild(kids);
+        }
+        bindLinkNav(link, doSectionNav);
+    }
+}
+
+// ── 折叠/展开通用助手（章节框与子节容器共用）──
+function toggleCollapse(el, toggle) {
+    if (!el) return;
+    if (el.classList.contains('collapsed')) {
+        el.classList.remove('collapsed');
+        el.style.maxHeight = el.scrollHeight + 'px';
+        if (toggle) toggle.classList.add('open');
+        setTimeout(function() { el.style.maxHeight = ''; }, 50);
+    } else {
+        el.style.maxHeight = el.scrollHeight + 'px';
+        void el.offsetHeight;
+        el.classList.add('collapsed');
+        if (toggle) toggle.classList.remove('open');
+    }
+}
+
+// ── 章/节统一的折叠逻辑（章节框 .section-box 与节容器 .sec-kids 共用）──
+// 折叠按钮即固定开关：手动展开 = 固定（_locked，不被自动折叠）；折叠 = 回归自动布局
+function makeFoldHandler(el, toggle) {
+    return function(e) {
+        e.stopPropagation();
+        if (!el) return;
+        el._locked = el.classList.contains('collapsed');
+        toggleCollapse(el, toggle);
+    };
+}
+
+// 是否含固定展开的后代（固定的节要求其祖先保持展开）
+function hasLockedDescendant(el) {
+    var kids = el.querySelectorAll('.sec-kids');
+    for (var i = 0; i < kids.length; i++) { if (kids[i]._locked) return true; }
+    return false;
+}
+
+// 节标题单击：直接跳转（原 250ms 双击判定与双击上锁入口已随图钉一并移除）
+function bindLinkNav(link, doNav) {
+    link.addEventListener('click', function(e) {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        doNav();
+    });
+}
+
+buildToc();
+
+// 侧栏章列表（静态，一次性查询缓存）
+var tocItems = document.querySelectorAll('#toc-tree > .ch-item');
+
+// ── 展开当前章；其余章框收起，手动展开（固定）的除外 ──
+// 固定语义（与节层一致）：折叠按钮手动展开 = 固定（_locked），滚动/换章/跳转都不折叠；
+// 只有手动折叠回去（_locked=false）才回归自动布局（只展开当前章）。
+// 章框开关只由它自己的折叠按钮控制：节固定不连带章框（章框收起时固定节随之隐藏，回到该章原样恢复）。
+function expandCurrentChapter(idx) {
+    var items = tocItems;
+    items.forEach(function(div, i) {
+        var link = div.querySelector('.ch-link');
+        if (link) link.classList.toggle('active', i === idx);
+        var box = div._sectionBox;
+        var isCurrent = (i === idx);
+        if (box) {
+            if (isCurrent) {
+                // 展开当前章（手动折叠后回归初始，会重新展开）
+                if (box.classList.contains('collapsed')) toggleCollapse(box, div._toggle);
+            } else if (!box.classList.contains('collapsed') && !box._locked) {
+                // 导航到新章：收起其他章框；手动展开（固定）的除外
+                toggleCollapse(box, div._toggle);
+            }
+        }
+        var tgl = div._toggle;
+        if (tgl) {
+            var isOpen = (box && !box.classList.contains('collapsed'));
+            tgl.classList.toggle('open', isOpen);
+        }
+    });
+}
+
+// ── 多级联动高亮 ──
+function highlightSectionLink(anchor) {
+    document.querySelectorAll('.sec-link.active').forEach(function(l) { l.classList.remove('active'); });
+    if (!anchor) return null;
+    // 只查当前章内的节链接：toc_N 等锚点在多章间重名，全局 querySelector 会匹配到其他章的第一个链接
+    var chDiv = tocItems[currentChapter];
+    var link = chDiv ? chDiv.querySelector('.sec-link[data-anchor="' + CSS.escape(anchor) + '"]') : null;
+    if (!link) return null;
+    for (var cur = link; cur && cur.classList.contains('sec-link'); cur = cur._parentSection) {
+        cur.classList.add('active');
+    }
+    link.scrollIntoView({ block: 'nearest' });
+    return link;
+}
+
+// ── 预计算锚点位置，滚动时纯数组查找 ──
+var _highlightSuppress = false;
+var _sectionRanges = [];
+
+// 遮挡高度 = 粘性标题栏自身高度（#ch-title 只是栏内 span，量它会少算 padding/border）+ 10px 留白
+function getBarH() {
+    var bar = document.getElementById('ch-title-bar') || document.getElementById('ch-title');
+    return bar ? bar.offsetHeight + 10 : 77;
+}
+
+function computeRanges() {
+    _sectionRanges = [];
+    // 只取当前章的节链接：toc_N 等锚点在多章间重名，全局查找会串到其他章
+    var chDiv = tocItems[currentChapter];
+    if (!chDiv) return;
+    var links = chDiv.querySelectorAll('.sec-link[data-anchor]');
+    if (links.length === 0) return;
+    var content = document.getElementById('ch-content');
+    var mt = mainEl.getBoundingClientRect().top;
+    for (var i = 0; i < links.length; i++) {
+        var anchor = links[i].getAttribute('data-anchor');
+        var el = document.getElementById(anchor);
+        if (!el) continue;
+        // 只统计当前章正文内的锚点：已切走的章节被 stash 进隐藏缓存容器，
+        // 若不排除其锚点，旧章区间会污染 _sectionRanges，导致误判 active 而“意外展开”其他章节。
+        if (content && !content.contains(el)) continue;
+        _sectionRanges.push({ anchor: anchor, top: el.getBoundingClientRect().top - mt + mainEl.scrollTop });
+    }
+    _sectionRanges.sort(function(a, b) { return a.top - b.top; });
+}
+
+function updateHighlight() {
+    var viewTop = mainEl.scrollTop + getBarH();
+    var link = null;
+    if (_sectionRanges.length > 0) {
+        var active = null;
+        for (var i = 0; i < _sectionRanges.length; i++) {
+            if (_sectionRanges[i].top <= viewTop + 5) active = _sectionRanges[i].anchor;
+            else break;
+        }
+        link = highlightSectionLink(active);
+    }
+    // 确定性布局：只展开“当前滚动位置对应的节链 + 上锁的节”，其余一律折叠。
+    // 无论向上/向下滚离、还是点击跳转，目录状态始终只反映当前阅读位置。
+    applySectionLayout(link);
+}
+
+function getSecKids(link) {
+    var row = link && link.parentNode;
+    if (row && row.classList.contains('sec-row')) {
+        var kids = row.nextElementSibling;
+        if (kids && kids.classList.contains('sec-kids')) return kids;
+    }
+    return null;
+}
+
+// ── 确定性目录布局：只展开“当前 active 节的祖先链 + 固定展开的节”，其余一律折叠 ──
+// 无论向上/向下滚离，还是点击跳转，目录状态始终只反映“当前滚动位置对应的内容部分”；
+// 固定展开的节（或含固定后代的节）不受影响。
+function applySectionLayout(activeLink) {
+    var chapterDiv = activeLink ? activeLink.closest('.ch-item') : tocItems[currentChapter];
+    if (!chapterDiv) return;
+    // 当前章框保持展开
+    var box = chapterDiv._sectionBox;
+    if (box && box.classList.contains('collapsed')) toggleCollapse(box, chapterDiv._toggle);
+    // 收集应保持展开的节容器：active 链上的（active 自身 + 各祖先）
+    var keep = [];
+    for (var cur = activeLink; cur && cur.classList.contains('sec-link'); cur = cur._parentSection) {
+        var k = getSecKids(cur);
+        if (k && keep.indexOf(k) === -1) keep.push(k);
+    }
+    // 遍历当前章所有节容器：链上或上锁的展开，其余折叠
+    chapterDiv.querySelectorAll('.sec-kids').forEach(function(kids) {
+        var onChain = keep.indexOf(kids) !== -1;
+        var locked = kids._locked || hasLockedDescendant(kids);
+        if (onChain || locked) {
+            if (kids.classList.contains('collapsed')) toggleCollapse(kids, kids._toggleEl);
+        } else if (!kids.classList.contains('collapsed')) {
+            toggleCollapse(kids, kids._toggleEl);
+        }
+    });
+}
+
+mainEl.addEventListener('scroll', function() {
+    if (!_highlightSuppress) updateHighlight();
+}, { passive: true });
+
+// resize debounce
+var _rzTimer;
+window.addEventListener('resize', function() {
+    clearTimeout(_rzTimer);
+    _rzTimer = setTimeout(computeRanges, 200);
+});
+
+function scrollToSection(anchor) {
+    var el = document.getElementById(anchor);
+    if (!el) return;
+    var mt = mainEl.getBoundingClientRect().top;
+    mainEl.style.scrollBehavior = 'auto';
+    mainEl.scrollTop = Math.max(0, el.getBoundingClientRect().top - mt + mainEl.scrollTop - getBarH());
+    requestAnimationFrame(function() { mainEl.style.scrollBehavior = 'smooth'; });
+}
+
+// ── 章加载 ──
+var chLock = false;
+
+function goChapter(delta) {
+    if (chLock) return;
+    var next = currentChapter + delta;
+    if (next < 0 || next >= TOTAL) return;
+    loadChapter(next, delta > 0 ? 'top' : 'bottom');
+}
+
+// ── 章节 DOM 缓存（放弃“换章即销毁”：已访问的章保留 DOM，切回原样恢复）──
+// 换章只把当前章正文 DOM 移入隐藏容器，不销毁（高亮 mark 原样保留）；
+// 概念弹窗切走销毁、切回从 mark 重建（锚定 mark，杜绝跨章覆盖）。
+// 回到已访问章直接原样放回（零 fetch），仅缓存超限(LRU)才真正销毁。
+var _chCache = {};          // idx -> { title, scrollTop, nodes:[] }
+var _chCacheMax = 8;        // LRU 上限：超过才销毁最久未访问的章（下次走 fetch+restore 重建）
+var _chCacheOrder = [];     // 最近访问顺序（尾部最新）
+var _chCacheHolder = null;
+
+function _cacheHolder() {
+    if (!_chCacheHolder) {
+        _chCacheHolder = document.createElement('div');
+        _chCacheHolder.style.display = 'none';
+        document.body.appendChild(_chCacheHolder);
+    }
+    return _chCacheHolder;
+}
+
+// 离开某章：正文节点移入缓存容器（保留 mark/内容，不销毁）。
+// 概念弹窗不缓存：切走即销毁，切回时从正文 mark 重建（始终锚定 mark，
+// 杜绝 aux 数组跨章污染导致旧章 UI 覆盖在新章上）。
+function stashChapter(idx) {
+    if (idx === undefined || idx === null || idx < 0) return;
+    var content = document.getElementById('ch-content');
+    var holder = _cacheHolder();
+    var nodes = [];
+    while (content.firstChild) nodes.push(content.removeChild(content.firstChild));
+    document.querySelectorAll('.semantic-pop').forEach(function(el) { el.remove(); });
+    _chCache[idx] = {
+        title: document.getElementById('ch-title').textContent,
+        scrollTop: mainEl.scrollTop,
+        nodes: nodes
+    };
+    nodes.forEach(function(n) { holder.appendChild(n); });
+    // LRU：本项移到尾部，超限销毁最久未访问项
+    _chCacheOrder = _chCacheOrder.filter(function(i) { return i !== idx; });
+    _chCacheOrder.push(idx);
+    while (_chCacheOrder.length > _chCacheMax) {
+        var old = _chCacheOrder.shift();
+        var oc = _chCache[old];
+        if (oc) {
+            oc.nodes.forEach(function(n) { n.remove(); });
+            delete _chCache[old];
+        }
+    }
+}
+
+// 回到某章：正文从缓存原样恢复（高亮 mark / 滚动位置全保留），
+// 概念弹窗从 mark 重建（锚定 mark，滚动与切章都跟随）；未缓存返回 false
+function unstashChapter(idx, scrollTo, anchor) {
+    var cache = _chCache[idx];
+    if (!cache) return false;
+    var content = document.getElementById('ch-content');
+    cache.nodes.forEach(function(n) { content.appendChild(n); });
+    document.getElementById('ch-title').textContent = cache.title;
+    _chCacheOrder = _chCacheOrder.filter(function(i) { return i !== idx; });
+    _chCacheOrder.push(idx);
+    // 同步设置滚动（先强制 reflow：appendChild 后需刷新布局，scrollHeight 才反映新章节）
+    mainEl.style.scrollBehavior = 'auto';
+    _highlightSuppress = true;
+    void mainEl.offsetHeight;   // 强制 reflow
+    if (anchor) {
+        requestAnimationFrame(function() { scrollToSection(anchor); _highlightSuppress = false; AuxLayer.restoreFromDom(); SemMargin.afterChapter(); });
+    } else {
+        if (scrollTo === 'bottom') mainEl.scrollTop = mainEl.scrollHeight;
+        else if (scrollTo === 'top') mainEl.scrollTop = 0;
+        else mainEl.scrollTop = cache.scrollTop;   // 无明确意图 → 恢复离开位置
+        AuxLayer.restoreFromDom();   // 从放回的 mark 重建书签/弹窗（滚动已就位，位置锚定 mark）
+        SemMargin.afterChapter();    // 段落级语义备注：已建则仅重算截断位置
+    }
+    requestAnimationFrame(function() {
+        computeRanges();
+        updateHighlight();
+        mainEl.style.scrollBehavior = 'smooth';
+        _highlightSuppress = false;
+    });
+    return true;
+}
+
+async function loadChapter(idx, scrollTo, anchor) {
+    if (idx < 0 || idx >= TOTAL) return;
+    chLock = true;
+    var prevIdx = currentChapter;
+    currentChapter = idx;
+    history.replaceState(null, '', '/read/' + BOOK_ID + '/' + idx);
+    expandCurrentChapter(idx);
+
+    // 先把当前章 DOM 移入缓存（保证 ch-content 清空，避免新旧内容叠加）
+    stashChapter(prevIdx);
+
+    // 缓存命中：直接原样恢复（不 fetch、不重建）
+    if (unstashChapter(idx, scrollTo, anchor)) {
+        onChapterChanged();
+        chLock = false;
+        return;
+    }
+
+    // 未命中：整章加载（fetch 失败时旧章已缓存，可回滚放回）
+    var loadEl = document.getElementById('ch-loading');
+    var timer = setTimeout(function() { loadEl.style.display = 'block'; }, 200);
+    try {
+        var resp = await fetch('/api/full_chapter/' + BOOK_ID + '/' + idx);
+        var data = await resp.json();
+        document.getElementById('ch-title').textContent = data.title;
+        document.getElementById('ch-content').innerHTML = data.html;
+        AuxLayer.prepareNewChapter();   // 新章：重置防重集合/书签序号
+        // 等浏览器完成布局后再计算锚点位置
+        requestAnimationFrame(function() {
+            computeRanges();
+            updateHighlight();
+        });
+        _highlightSuppress = true;
+        if (anchor) {
+            requestAnimationFrame(function() { scrollToSection(anchor); _highlightSuppress = false; });
+        } else {
+            mainEl.style.scrollBehavior = 'auto';
+            mainEl.scrollTop = (scrollTo === 'bottom') ? mainEl.scrollHeight : 0;
+            requestAnimationFrame(function() { mainEl.style.scrollBehavior = 'smooth'; _highlightSuppress = false; });
+        }
+        AuxLayer.restore();   // 新章内容加载后恢复已记录的高亮/书签
+        SemMargin.afterChapter();   // 语义层：按段落挂右栏备注
+        onChapterChanged();         // 页码标签 + 章节层面板（L2）
+    } catch(e) {
+        console.error(e);
+        // 加载失败：旧章已 stash，回滚章节状态并放回旧章 DOM（恢复离开位置）
+        currentChapter = prevIdx;
+        history.replaceState(null, '', '/read/' + BOOK_ID + '/' + prevIdx);
+        expandCurrentChapter(prevIdx);
+        if (unstashChapter(prevIdx)) onChapterChanged();
+    }
+    finally { clearTimeout(timer); loadEl.style.display = 'none'; chLock = false; }
+}
+
+function updateNavLabel() {
+    document.getElementById('ch-nav-label').textContent = (currentChapter + 1) + ' / ' + TOTAL;
+    document.getElementById('ch-nav-prev').style.visibility = currentChapter > 0 ? 'visible' : 'hidden';
+    document.getElementById('ch-nav-next').style.visibility = currentChapter < TOTAL - 1 ? 'visible' : 'hidden';
+}
+
+// ── 章变化后的统一刷新（换章 / 缓存切回 / 回滚都走这里）──
+function onChapterChanged() {
+    updateNavLabel();
+    loadChapterLayer();
+}
+
+// ── 展示栏：显示/隐藏（VSCode 活动栏图标开关） + 右缘拖拽调宽 ──
+var sideWrap = document.getElementById('side-wrap');
+var SIDEBAR_MIN = 120;         // 目录栏最小宽度；拖到比它更窄 → 直接收起（见 initSidebarResize）
+var SIDEBAR_MAX_RATIO = 0.4;   // 目录栏最多占窗口 40%
+var SIDEBAR_MAX_PX = 720;      // 绝对上限
+var READER_MIN_PX = 612;       // 给阅读区留的最小宽度（52 活动栏 + 正文 340 + 间 28 + 备注 120 + 余量）
+var SIDEBAR_KEY_W = 'reader_sidebar_w';
+var SIDEBAR_KEY_C = 'reader_panel_hidden';
+
+// 目录栏最大宽度：比例、绝对上限、保证阅读区的下限 三者取最小
+function sidebarMax() {
+    return Math.max(SIDEBAR_MIN,
+        Math.min(Math.round(window.innerWidth * SIDEBAR_MAX_RATIO),
+                 window.innerWidth - READER_MIN_PX,
+                 SIDEBAR_MAX_PX));
+}
+
+function setSidebarWidth(w, animate) {
+    sideWrap.style.transition = animate ? '' : 'none';
+    sideWrap.style.width = w + 'px';
+}
+
+function toggleSidebar() {
+    var hidden = sideWrap.classList.toggle('hidden');
+    document.body.classList.toggle('no-sidebar', hidden);
+    localStorage.setItem(SIDEBAR_KEY_C, hidden ? '1' : '0');
+    requestAnimationFrame(function() { computeRanges(); SemMargin.layout(); });   // 正文宽度变 → 备注宽度/截断重算
+}
+
+// 拖拽过程中实时重算备注宽度（不必等松手）
+var _semLayoutRaf = 0;
+function semLayoutSoon() {
+    if (_semLayoutRaf) return;
+    _semLayoutRaf = requestAnimationFrame(function() { _semLayoutRaf = 0; SemMargin.layout(); });
+}
+
+// 拖拽右缘实时调宽；拖过最小宽度阈值 → 目录栏直接收起（VSCode 式）
+(function initSidebarResize() {
+    var rs = document.getElementById('resizer');
+    var dragging = false, startX = 0, startW = 0, lastW = 0;
+    function endDrag() {
+        dragging = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+    }
+    rs.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        dragging = true; startX = e.clientX; startW = sideWrap.offsetWidth; lastW = startW;
+        setSidebarWidth(startW, false);
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+    });
+    document.addEventListener('mousemove', function(e) {
+        if (!dragging) return;
+        var raw = startW + e.clientX - startX;
+        if (raw < SIDEBAR_MIN) {          // 拖到最小宽度以下 → 收起目录栏，本次拖拽结束
+            endDrag();
+            if (!sideWrap.classList.contains('hidden')) toggleSidebar();
+            localStorage.setItem(SIDEBAR_KEY_W, Math.max(SIDEBAR_MIN, lastW));   // 再展开时回到可用宽度
+            return;
+        }
+        lastW = Math.min(raw, sidebarMax());
+        setSidebarWidth(lastW, false);
+        semLayoutSoon();   // 拖动中实时自适应备注宽度
+    });
+    document.addEventListener('mouseup', function() {
+        if (!dragging) return;
+        endDrag();
+        localStorage.setItem(SIDEBAR_KEY_W, sideWrap.offsetWidth);
+        requestAnimationFrame(computeRanges);
+        SemMargin.layout();   // 栏宽变化 → 正文段落高度变 → 重算备注截断
+    });
+})();
+
+// ── 展示栏项目：点击标题折叠/展开（VSCode 式）──
+// 展开项平分剩余空间（仅目录展开时即一展到底，无需手动拉伸）；折叠项只留标题行、按文档流聚于顶部
+// 折叠状态不持久化：每次打开书（页面加载）都回归默认布局（目录展开、章节层折叠）
+var pvToc = document.getElementById('pv-toc');
+var pvBook = document.getElementById('pv-book');
+var pvSplit = document.getElementById('pv-splitter');
+var PV_HEADER_H = 30, PV_MIN_BODY = 40;
+
+function setPvOpen(sec, open) {
+    sec.classList.toggle('open', open);
+    sec.classList.toggle('collapsed', !open);
+    sec.style.flex = '';   // 清除拖拽产生的手动高度，回归 flex 分配
+    sec.style.height = '';
+    updatePvSplitter();    // 分隔条只在目录与章节层都展开时才有意义
+}
+
+function updatePvSplitter() {
+    // 章节层未展开时，拖分隔条只会把目录压出空白（负作用）→ 直接不显示、不可拖
+    pvSplit.style.display = (pvToc.classList.contains('open') && pvBook.classList.contains('open'))
+        ? 'block' : 'none';
+}
+
+function bindPvToggle(sec) {
+    sec.querySelector('.pv-header').addEventListener('click', function() {
+        setPvOpen(sec, !sec.classList.contains('open'));
+    });
+}
+bindPvToggle(pvToc);
+bindPvToggle(pvBook);
+updatePvSplitter();   // 页面默认布局：目录展开 + 章节层折叠 → 分隔条不显示
+
+// 分隔条拖拽（底部上拉）：压缩目录高度，拖到只剩标题行 → 自动折叠目录
+(function initPvSplitter() {
+    var dragging = false, panelTop = 0;
+    pvSplit.addEventListener('mousedown', function(e) {
+        // 只有目录与章节层都展开时，这条分隔条才有意义（否则只是把目录压出空白）
+        if (!pvToc.classList.contains('open') || !pvBook.classList.contains('open')) return;
+        e.preventDefault();
+        dragging = true;
+        panelTop = document.getElementById('panel').getBoundingClientRect().top;
+        document.body.style.cursor = 'row-resize';
+        document.body.style.userSelect = 'none';
+    });
+    document.addEventListener('mousemove', function(e) {
+        if (!dragging) return;
+        var raw = e.clientY - panelTop;
+        if (raw <= PV_HEADER_H + 10) {   // 拖到底部上拉越过最小高度 → 折叠目录
+            setPvOpen(pvToc, false);
+            dragging = false;
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            return;
+        }
+        var panelH = document.getElementById('panel').offsetHeight;
+        var bookMin = PV_HEADER_H + (pvBook.classList.contains('open') ? PV_MIN_BODY : 0);
+        if (pvBook.classList.contains('open') && panelH - raw < PV_HEADER_H + PV_MIN_BODY) {
+            // 拉过章节层最小高度（标题行 + 40px）→ 章节层直接折叠到底
+            // （折叠后 updatePvSplitter 会收起分隔条，不会再拖出空白）
+            setPvOpen(pvBook, false);
+            pvToc.style.flex = '';        // 章节层已收起 → 目录回归占满，不留空白
+            pvToc.style.height = '';
+            dragging = false;
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            return;
+        }
+        var h = Math.min(raw, panelH - 5 - bookMin);
+        pvToc.style.flex = 'none';
+        pvToc.style.height = h + 'px';
+    });
+    document.addEventListener('mouseup', function() {
+        if (!dragging) return;
+        dragging = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+    });
+})();
+
+// 页面加载即 HTML 默认布局（目录展开、章节层折叠），无需恢复逻辑
+
+// ── 章节层面板内容：L2（章节层）随当前章刷新 ──
+// 阅读器章索引与 chapters.spine_order 在部分书上并不同步（早期切分错位），
+// 所以先拿 /api/layer/chapter_list 按“章标题”把当前显示章对到正确的章节层条目，
+// 对不上再回退到同索引直取；请求带序号，切章快时丢弃旧响应。
+var _chLayerSeq = 0;
+var _chLayerList = null;      // [{chapter_idx, title, has_content}]（一次拉取后缓存）
+
+function normTitle(t) {
+    return (t || '').normalize('NFKC').replace(/\s+/g, '');
+}
+
+async function chapterLayerIdxFor(title) {
+    if (!_chLayerList) {
+        try {
+            var r = await fetch('/api/layer/chapter_list/' + encodeURIComponent(BOOK_ID));
+            _chLayerList = ((await r.json()).items) || [];
+        } catch (e) { _chLayerList = []; }
+    }
+    var want = normTitle(title);
+    if (!want) return currentChapter;
+    var best = null, bestLen = 0;
+    for (var i = 0; i < _chLayerList.length; i++) {
+        var t = normTitle(_chLayerList[i].title || '');
+        if (!t) continue;
+        if (t === want) return _chLayerList[i].chapter_idx;   // 完全相同优先
+        // 前缀关系也算命中：阅读器章标题常是数据表章标题的前缀（如「第五章　理性的确定性与真理性」vs「…　导言」）
+        var n = Math.min(t.length, want.length), k = 0;
+        while (k < n && t.charAt(k) === want.charAt(k)) k++;
+        if (k === n && n >= 4 && n > bestLen) { best = _chLayerList[i]; bestLen = n; }   // 阈值 4：能命中「第六章　精神」这类短标题
+    }
+    return best ? best.chapter_idx : currentChapter;   // 前缀命中用 best；完全对不上（书内章标题重复等）才回退同索引
+}
+
+async function loadChapterLayer() {
+    var el = document.getElementById('pv-book-content');
+    var seq = ++_chLayerSeq;
+    var shownTitle = document.getElementById('ch-title').textContent;   // 当前显示章的标题
+    try {
+        var idx = await chapterLayerIdxFor(shownTitle);
+        var r = await fetch('/api/layer/chapter/' + encodeURIComponent(BOOK_ID) + '/' + idx);
+        var d = await r.json();
+        if (seq !== _chLayerSeq) return;   // 已切到别的章 → 丢弃旧响应
+        el.innerHTML = '';
+        // 只有确实有 L2 内容时才显示章标题：部分章的 chapters.title 是错位的长段落，空章不必把它抻出来
+        if (d && d.matched) {
+            // 标题用“你正在读的那一章”：数据表的章标题可能带入库时误判的「导言」等尾巴
+            // （如「第六章　精神　导言」其实整章），显示它反而像对错了章
+            var t = document.createElement('div');
+            t.className = 'pv-ch-title';
+            t.textContent = shownTitle || d.title || '';
+            el.appendChild(t);
+        }
+        var body = document.createElement('div');
+        body.innerHTML = (d && d.content) ? renderMarkdown(d.content)
+                                         : '<span class="pv-empty">（本章暂无章节层内容）</span>';
+        el.appendChild(body);
+        var box = el.closest ? el.closest('.pv-body') : null;
+        if (box) box.scrollTop = 0;   // 整章全展示：换章后从头看起
+    } catch (e) {
+        if (seq === _chLayerSeq) el.innerHTML = '<span class="pv-empty">加载失败</span>';
+    }
+}
+
+// ── 初始化 ──
+// 恢复展示栏状态（显示/隐藏 + 上次宽度）
+(function initSidebarState() {
+    var savedW = parseInt(localStorage.getItem(SIDEBAR_KEY_W) || '280', 10);
+    if (localStorage.getItem(SIDEBAR_KEY_C) === '1') {
+        sideWrap.classList.add('hidden');
+        document.body.classList.add('no-sidebar');
+    } else if (!isNaN(savedW) && savedW >= SIDEBAR_MIN) {
+        setSidebarWidth(Math.min(savedW, sidebarMax()), false);   // 窗口变小/上限变了 → 落地时夹紧
+    }
+})();
+
+// 窗口尺寸变化后：目录栏宽度重新夹紧 + 备注栏重算
+(function initSidebarClampOnResize() {
+    var t = 0;
+    window.addEventListener('resize', function() {
+        clearTimeout(t);
+        t = setTimeout(function() {
+            if (!sideWrap.classList.contains('hidden')) {
+                var w = Math.min(sideWrap.offsetWidth, sidebarMax());
+                if (w !== sideWrap.offsetWidth) setSidebarWidth(w, false);
+            }
+        }, 200);
+    });
+})();
+
+expandCurrentChapter(currentChapter);
+onChapterChanged();
+requestAnimationFrame(function() {
+    computeRanges();
+    updateHighlight();
+    // 从辅助阅读返回（?rt=1）：恢复到进入时的章节滚动位置
+    try {
+        var _qp = new URLSearchParams(location.search);
+        var _pos = (_qp.get('rt') === '1') ? JSON.parse(sessionStorage.getItem('reader3_ret_' + BOOK_ID) || 'null') : null;
+        if (_pos && _pos.idx === currentChapter && typeof _pos.scrollTop === 'number') {
+            sessionStorage.removeItem('reader3_ret_' + BOOK_ID);
+            mainEl.style.scrollBehavior = 'auto';
+            mainEl.scrollTop = _pos.scrollTop;
+            requestAnimationFrame(function() { mainEl.style.scrollBehavior = 'smooth'; });
+        }
+    } catch (e) {}
+});
+
+mainEl.addEventListener('wheel', function(e) {
+    // 弹窗内滚动只滚弹窗：不冒泡触发主文翻章（弹窗滚到底继续滚时主文会被意外推走/翻章）
+    if (e.target.closest && e.target.closest('.semantic-pop')) return;
+    var atBottom = mainEl.scrollTop + mainEl.clientHeight >= mainEl.scrollHeight - 4;
+    var atTop = mainEl.scrollTop <= 4;
+    if (atBottom && e.deltaY > 30 && !chLock) goChapter(1);
+    else if (atTop && e.deltaY < -30 && !chLock) goChapter(-1);
+}, { passive: true });
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'ArrowRight' || e.key === 'PageDown') goChapter(1);
+    if (e.key === 'ArrowLeft'  || e.key === 'PageUp')   goChapter(-1);
+});
+
+// ── 正文内超链接跳转（原阅读器里的标题/脚注等跳转）──
+document.getElementById('ch-content').addEventListener('click', function(e) {
+    var a = e.target.closest ? e.target.closest('a[href]') : null;
+    if (!a) return;
+    var href = a.getAttribute('href') || '';
+    // 外部链接/空链接/协议链接放行（交给浏览器默认行为）
+    if (!href || href === '#' || /^(https?:)?\/\/|^(mailto|data|javascript):/i.test(href)) return;
+    e.preventDefault();
+
+    var hashIdx = href.indexOf('#');
+    var filePart = hashIdx >= 0 ? href.slice(0, hashIdx) : href;
+    var anchor = hashIdx >= 0 ? href.slice(hashIdx + 1) : '';
+    try { filePart = decodeURIComponent(filePart); anchor = decodeURIComponent(anchor); } catch (err) {}
+
+    // 1) 锚点在当前章内容里 → 直接滚动定位
+    if (anchor && document.getElementById(anchor)) {
+        scrollToSection(anchor);
+        return;
+    }
+    // 2) 跨章锚点 → 用锚点映射找到目标章并跳转
+    if (anchor && anchorMap && anchorMap[anchor] !== undefined) {
+        loadChapter(anchorMap[anchor], 'top', anchor);
+        return;
+    }
+    // 3) 只有文件没有锚点 → 尝试跳转到该文件对应的章
+    if (filePart) {
+        var base = filePart.split('/').pop();
+        for (var i = 0; i < tocTree.length; i++) {
+            var fh = (tocTree[i].href || '').split('#')[0];
+            if (fh === filePart || fh.split('/').pop() === base) {
+                loadChapter(i, 'top');
+                return;
+            }
+        }
+    }
+});
+
+// ═══════════════════════════════════════════════════════
+// 辅助阅读版块 —— 独立 IIFE 模块 AuxLayer（现只做概念层）
+// 划词 → concept_layer → 黄底 mark + 每词独立弹窗
+// 弹窗：标题 + 四角星跳转 + 图钉锁定 + 点击置顶 + 悬停显示/移开自动关闭 + 拖动/拉伸
+// 记忆：选中即写 layer（content 当前为占位填充物），再选同文本直接命中。
+// 语义层已独立为“段落级右栏灰字备注”（见下方 SemMargin 模块），
+// 原语义层的弹窗 / 书签 / 蓝下划线代码已整体移除。
+// ═══════════════════════════════════════════════════════
+var AuxLayer = (function() {
+    var _popResize = null;           // 弹窗拉伸状态 {pop, sx, sy, sw, sh}
+    var _popDrag = null;             // 弹窗拖动状态 {pop, sx, sy, lx, ty}
+
+    var CONCEPT_ON = false;          // 解释笔（划词）开关
+    var _popZ = 500;                 // 弹窗 z-index 计数（点击置顶）
+    var _popCloseDelay = 400;        // 弹窗自动关闭延迟（从 mark 移到弹窗的缓冲）
+    var _conListCache = null;        // 概念 list 缓存
+    var _restoredSources = {};       // 已恢复 source 集合（防并发/重复包裹）
+
+    // ── 解释笔开关：只控制“划词”（选中文本 → 概念标记）。
+    // 弹窗显示是独立逻辑（mark 存在即 hover/点击可看），不受本开关影响。
+    // 按钮已移至左侧边栏（browser-bar 的 #bb-concept，active 样式由 .bb-item.active 提供）。──
+    document.getElementById('bb-concept').addEventListener('click', function() {
+        CONCEPT_ON = !CONCEPT_ON;
+        this.classList.toggle('active', CONCEPT_ON);
+    });
+
+    // ── 概念/语义 分流器（可拆卸插件）──
+    // 现况：语义层已改为“按段落预生成 + 右栏灰字备注”（见下方 SemMargin 模块），
+    // 解释笔只做概念层，故此处恒为 'concept'；需要恢复语义划词时改回：
+    // return (text.length <= 30) ? 'concept' : 'semantic'（并恢复语义弹窗/书签代码）；
+    function auxClassify(text) {
+        return 'concept';
+    }
+
+    // ── 图钉锁定持久化（localStorage）：打开固定后翻页/刷新回来弹窗保持显现 ──
+    function pinKey(kind, term) { return 'reader3_pin_' + BOOK_ID + '_' + kind + '_' + term; }
+    function savePinState(kind, term, locked) {
+        try {
+            if (locked) localStorage.setItem(pinKey(kind, term), '1');
+            else localStorage.removeItem(pinKey(kind, term));
+        } catch (e) {}
+    }
+    function isPinLocked(kind, term) {
+        try { return localStorage.getItem(pinKey(kind, term)) === '1'; } catch (e) { return false; }
+    }
+    // ── 弹窗公共装饰：图钉锁定 + 点击置顶 + 悬停保持/离开关闭（概念弹窗）──
+    // 弹窗图钉（锁定弹窗位置，与目录折叠按钮无关）：实心=已锁定 / 空心=未锁定
+    var LOCK_ICON_PIN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16,9V4h1c0.55,0 1,-0.45 1,-1v0c0,-0.55 -0.45,-1 -1,-1H7C6.45,2 6,2.45 6,3v0c0,0.55 0.45,1 1,1h1v5c0,1.66 -1.34,3 -3,3v2h5.97v7l1,1l1,-1v-7H19v-2C17.34,12 16,10.66 16,9z"/></svg>';
+    var LOCK_ICON_UNPIN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16,9V4h1c0.55,0 1,-0.45 1,-1v0c0,-0.55 -0.45,-1 -1,-1H7C6.45,2 6,2.45 6,3v0c0,0.55 0.45,1 1,1h1v5c0,1.66 -1.34,3 -3,3v2h5.97v7l1,1l1,-1v-7H19v-2C17.34,12 16,10.66 16,9z M14.83,4H9.17v4.37c0,1.32 -0.83,2.42 -2,2.83V13h9.66v-1.8C16.66,10.79 15.83,9.69 15.83,8.37V4z"/></svg>';
+    function bringToFront(pop) {
+        var cur = parseInt(window.getComputedStyle(pop).zIndex, 10) || 0;
+        if (cur > _popZ) _popZ = cur;   // 吸收外部更高的初始 z
+        pop.style.zIndex = ++_popZ;     // 最后点击的弹窗始终在最上层
+    }
+    function wirePopChrome(pop, st) {
+        var pin = pop.querySelector('.sp-pin');
+        if (pin) {
+            pin.innerHTML = LOCK_ICON_UNPIN;
+            pin.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var locked = !st.getLocked();
+                st.setLocked(locked);
+                pin.classList.toggle('locked', locked);
+                pin.innerHTML = locked ? LOCK_ICON_PIN : LOCK_ICON_UNPIN;
+                if (st.onLock) st.onLock(locked);   // 持久化锁定状态（翻页/刷新后保持）
+            });
+        }
+        // 弹窗公共装饰 wirePopChrome：图钉锁定 / 点击置顶 / 悬停保持与离开关闭
+        pop.addEventListener('mousedown', function() { bringToFront(pop); });
+        pop.addEventListener('mouseenter', function() { if (st.clearTimer) st.clearTimer(); });
+        pop.addEventListener('mouseleave', function() { if (st.onLeave) st.onLeave(); });
+    }
+
+    // 弹窗创建（概念层）：标题栏 + 图钉 + 八方箭头拖动 + 置顶 + 拉伸 + 悬停保持/关闭
+    function createLayerPop(mark, opts) {
+        var view = document.getElementById('chapter-view');
+        var pop = document.createElement('div');
+        pop.className = 'semantic-pop';
+        pop.innerHTML = '<div class="sp-title"></div>' +
+                        '<div class="sp-pin" title="锁定/解锁（锁定后弹窗保持显示）"></div>' +
+                        '<div class="sp-move" title="拖动移动弹窗"></div>' +
+                        '<div class="sp-body">加载中…</div>' +
+                        '<div class="sp-resize" title="拖动调整大小"></div>';
+        view.appendChild(pop);
+        if (opts.title) pop.querySelector('.sp-title').textContent = opts.title;
+        else pop.querySelector('.sp-title').style.display = 'none';
+        pop.querySelector('.sp-move').innerHTML =
+            '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 9h4V6h3l-5-5-5 5h3v3zm-1 1H6V7l-5 5 5 5v-3h3v-4zm14 2l-5-5v3h-3v4h3v3l5-5zm-9 3h-4v3H7l5 5 5-5h-3v-3z"/></svg>';
+        opts.setLocked(false);
+        wirePopChrome(pop, opts);
+        var rs = pop.querySelector('.sp-resize');
+        rs.addEventListener('mousedown', function(e) {
+            e.preventDefault();
+            // 不 stopPropagation → 冒泡到 pop 触发置顶
+            _popResize = { pop: pop, sx: e.clientX, sy: e.clientY, sw: pop.offsetWidth, sh: pop.offsetHeight };
+            document.body.style.cursor = 'nwse-resize';
+        });
+        // 拖动移动：仅右上角八方箭头图标可拖动（拖动后暂停自动定位，位置以手动为准）
+        var mv = pop.querySelector('.sp-move');
+        mv.addEventListener('mousedown', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            pop._userPos = true;
+            pop.classList.add('dragging');
+            _popDrag = { pop: pop, sx: e.clientX, sy: e.clientY,
+                         lx: parseFloat(pop.style.left) || 0, ty: parseFloat(pop.style.top) || 0 };
+        });
+        if (opts.onContent) opts.onContent(pop);
+        return pop;
+    }
+
+    // 公共 layer 请求（概念层）
+    function layerGet(seg, query) {
+        return fetch('/api/layer/' + seg + '/' + BOOK_ID + '?' + query).then(function(r) { return r.json(); });
+    }
+
+    // ── 概念层：每词一独立弹窗（hover 显示 / 移开自动关闭 / 图钉锁定 / 点击置顶）──
+    function initConceptMark(mark) {
+        mark._locked = false;
+        var term = mark.getAttribute('data-term') || '';
+        mark._pop = createLayerPop(mark, {
+            title: term,
+            getLocked: function() { return mark._locked; },
+            setLocked: function(v) { mark._locked = v; },
+            onLock: function(v) { savePinState('concept', term, v); },
+            clearTimer: function() { if (mark._cTimer) { clearTimeout(mark._cTimer); mark._cTimer = null; } },
+            onLeave: function() { scheduleConceptClose(mark); },
+            onContent: function(pop) { loadConceptContent(mark, pop); }
+        });
+        mark._pop.style.display = 'none';   // 初始隐藏，hover 时显示
+        // 持久化锁定恢复：打开固定后翻页/刷新回来弹窗保持显现
+        if (isPinLocked('concept', term)) {
+            mark._locked = true;
+            var pin = mark._pop.querySelector('.sp-pin');
+            pin.classList.add('locked');
+            pin.innerHTML = LOCK_ICON_PIN;
+            showConceptPop(mark);
+        }
+    }
+    async function loadConceptContent(mark, pop) {
+        var term = mark.getAttribute('data-term') || '';
+        try {
+            var data = await layerGet('concept', 'term=' + encodeURIComponent(term));
+            if (mark._pop !== pop) return;
+            pop.querySelector('.sp-body').innerHTML = renderMarkdown(data.content || '（暂无内容）');
+            // 选中即写入记忆：原文 + 段落锚点（content 由后端填充全书层文本）
+            saveConceptMemo(term, mark.getAttribute('data-source') || term, mark.getAttribute('data-anchor') || '');
+        } catch (err) { console.error('概念层请求失败', err); }
+    }
+    function showConceptPop(mark) {
+        var pop = mark._pop;
+        if (!pop) return;
+        if (mark._cTimer) { clearTimeout(mark._cTimer); mark._cTimer = null; }
+        positionConceptPop(pop, mark);
+        pop.style.display = 'flex';
+    }
+    function scheduleConceptClose(mark) {
+        var pop = mark._pop;
+        if (!pop || mark._locked) return;
+        if (mark._cTimer) clearTimeout(mark._cTimer);
+        mark._cTimer = setTimeout(function() {
+            if (mark._locked) return;
+            pop.style.display = 'none';
+        }, _popCloseDelay);
+    }
+    // 概念弹窗定位：根据当前布局在上下左右四个方向中选能完整放入可视区的位置
+    // （优先右侧；放不下依次尝试左/下/上），全部放不下则 clamp 到可视区内。
+    // 用户手动拖动过（pop._userPos）则保留手动位置，不再自动定位。
+    function positionConceptPop(pop, mark) {
+        if (pop._userPos) return;
+        var view = document.getElementById('chapter-view');
+        var vRect = view.getBoundingClientRect();
+        var mRect = mark.getBoundingClientRect();
+        var pw = pop.offsetWidth || 320;
+        var ph = pop.offsetHeight || 400;
+        var gap = 8;
+        var mLeft = mRect.left - vRect.left;
+        var mTop = mRect.top - vRect.top;
+        var mBottom = mRect.bottom - vRect.top;
+        var cands = [
+            { l: mRect.right - vRect.left + gap, t: mTop - 6 },          // 右
+            { l: mRect.left - vRect.left - pw - gap, t: mTop - 6 },      // 左
+            { l: mLeft, t: mBottom + gap },                              // 下
+            { l: mLeft, t: mTop - ph - gap },                            // 上
+        ];
+        var vw = view.clientWidth, vh = view.clientHeight;
+        for (var i = 0; i < cands.length; i++) {
+            var c = cands[i];
+            if (c.l >= 0 && c.l + pw <= vw && c.t >= 0 && c.t + ph <= vh) {
+                pop.style.left = c.l + 'px';
+                pop.style.top = c.t + 'px';
+                return;
+            }
+        }
+        // 兜底：右优先，clamp 到可视区（顶部留出标题栏高度，避免被遮挡/裁剪）
+        var l = Math.max(0, Math.min(mRect.right - vRect.left + gap, vw - pw));
+        var t = Math.max(60, Math.min(mTop - 6, vh - ph - 8));
+        pop.style.left = l + 'px';
+        pop.style.top = t + 'px';
+    }
+
+    // ── 悬停委托：概念 mark（弹窗独立于解释笔开关，mark 存在即响应）──
+    document.addEventListener('mouseover', function(e) {
+        var m = e.target.closest ? e.target.closest('mark.concept-hl') : null;
+        if (m) showConceptPop(m);
+    });
+    document.addEventListener('mouseout', function(e) {
+        var m = e.target.closest ? e.target.closest('mark.concept-hl') : null;
+        if (m) scheduleConceptClose(m);
+    });
+
+    // ── 选中高亮 ──
+    document.getElementById('ch-content').addEventListener('mouseup', function(e) {
+        if (!CONCEPT_ON) return;
+        if (e.target.closest && (e.target.closest('mark') || e.target.closest('.semantic-pop'))) return;
+        setTimeout(applyHighlight, 0);
+    });
+
+    function applyHighlight() {
+        var sel = window.getSelection();
+        if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+        var range = sel.getRangeAt(0);
+        var content = document.getElementById('ch-content');
+        if (!content.contains(range.commonAncestorContainer)) return;
+        var text = sel.toString().trim();
+        if (text.length < 1 || text.length > 2000) return;   // 过短不处理；上限 2000 防误选整页
+        // 跨段选区不处理：inline <mark> 无法合法包裹块级元素（<p>/<div>），
+        // extractContents 降级会生成被浏览器拆分的无效 DOM → 正文空白
+        if (rangeCrossesBlocks(range, content)) return;
+        var kind = auxClassify(text);   // 现况恒为 'concept'
+        var mark = document.createElement('mark');
+        mark.className = 'concept-hl';
+        mark.setAttribute('data-term', text);
+        mark.setAttribute('data-kind', kind);
+        try {
+            range.surroundContents(mark);
+        } catch (err) {
+            // 选区部分跨越子元素（脚注 <sup> / 链接 <a> 等）时 surroundContents 抛
+            // HierarchicalRequestError → 降级：extractContents 拆解后手动包裹
+            try {
+                var frag = range.extractContents();
+                mark.appendChild(frag);
+                range.insertNode(mark);
+            } catch (err2) { return; }
+        }
+        sel.removeAllRanges();
+        // 记录原文与所在段落前缀（记忆持久化：换章/离开后回来据此恢复高亮）
+        mark.setAttribute('data-source', text);
+        mark.setAttribute('data-anchor', paraPrefixOf(mark));
+        initConceptMark(mark);   // 概念：每词一独立弹窗（hover 显示）；记忆由 loadConceptContent 写入
+    }
+
+    // 选区是否跨越多个块级元素（段落级）：inline <mark> 只能包裹同一块内的内容
+    function rangeCrossesBlocks(range, content) {
+        function blockOf(node) {
+            var el = (node.nodeType === 1) ? node : node.parentNode;
+            while (el && el !== content && el !== document.body) {
+                var t = el.tagName;
+                if (t === 'P' || t === 'DIV' || t === 'H1' || t === 'H2' || t === 'H3' ||
+                    t === 'H4' || t === 'H5' || t === 'H6' || t === 'LI' || t === 'BLOCKQUOTE' ||
+                    t === 'SECTION' || t === 'TR') return el;
+                el = el.parentNode;
+            }
+            return null;
+        }
+        var sb = blockOf(range.startContainer);
+        var eb = blockOf(range.endContainer);
+        if (sb && eb) return sb !== eb;
+        // 任一端定位不到块（悬在 content 直接子级）→ 保守按跨段处理
+        return range.startContainer !== range.endContainer;
+    }
+
+    // ── 弹窗拉伸（共享管理器，无大小边界）──
+    document.addEventListener('mousemove', function(e) {
+        if (_popDrag) {
+            var d = _popDrag;
+            d.pop.style.left = (d.lx + e.clientX - d.sx) + 'px';
+            d.pop.style.top = (d.ty + e.clientY - d.sy) + 'px';
+            return;
+        }
+        if (_popResize) {
+            var r = _popResize;
+            r.pop.style.width = (r.sw + e.clientX - r.sx) + 'px';
+            r.pop.style.height = (r.sh + e.clientY - r.sy) + 'px';
+        }
+    });
+    document.addEventListener('mouseup', function() {
+        if (_popDrag) {
+            _popDrag.pop.classList.remove('dragging');
+            _popDrag = null;
+        }
+        if (_popResize) { _popResize = null; document.body.style.cursor = ''; }
+    });
+
+    // ── 记忆写入（选中即缓存 → layer 表；content 缺省时后端自动填充全书层文本）──
+    function saveConceptMemo(term, sourceText, anchorText) {
+        fetch('/api/layer/concept/' + BOOK_ID, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ term: term, content: '', source_text: sourceText || term, anchor_text: anchorText || '' })
+        }).then(function(r) { if (r.ok) _conListCache = null; })   // 记忆更新 → 缓存失效，下次恢复重新拉取
+          .catch(function() {});
+    }
+
+
+
+    // ── 换到全新章：旧章弹窗已随 stash 移入缓存容器（不销毁），
+    // 这里只需重置章节级状态（防重集合）──
+    function prepareNewChapter() {
+        _restoredSources = {};   // 新章节内容需重新恢复，清空防重集合
+    }
+
+    // ── 缓存切回某章后：概念弹窗按新布局重新定位（滚动跟随用）──
+    function reposition() {
+        document.querySelectorAll('#ch-content mark.concept-hl').forEach(function(m) {
+            if (m._pop && m._pop.style.display !== 'none' && !m._pop._userPos) {
+                positionConceptPop(m._pop, m);
+            }
+        });
+    }
+
+    // ── 从当前章 DOM 中现存的概念 mark 重建弹窗（缓存切回用）──
+    // mark 始终在正文里；切走时弹窗被销毁，切回后据 mark 重建，
+    // 保证它们锚定 mark：页内滚动天然跟随，页跳转后位置也正确。
+    function restoreFromDom() {
+        document.querySelectorAll('#ch-content mark.concept-hl').forEach(function(m) {
+            initConceptMark(m);
+        });
+    }
+
+    // ── 滚动跟随：概念弹窗锚定 mark 实时移动（未拖动时随 mark 走）──
+    var _reposRaf = null;
+    mainEl.addEventListener('scroll', function() {
+        if (_reposRaf) return;
+        _reposRaf = requestAnimationFrame(function() {
+            _reposRaf = null;
+            reposition();
+        });
+    }, { passive: true });
+
+    // ═══════════════════════════════════════════════════════
+    // 记忆恢复：先记录后识别 —— 选中时已把原文(source_text)和所在段落前缀
+    // (anchor_text) 写入 layer 表；离开/换章/刷新后回来，据此在当前章正文中
+    // 重新定位并恢复概念高亮 mark，保证记忆不丢失。
+    // ═══════════════════════════════════════════════════════
+    function paraPrefixOf(el) {
+        var content = document.getElementById('ch-content');
+        var node = el;
+        while (node && node !== content && node !== document.body) {
+            if (node.nodeType === 1 && /^(P|DIV|H1|H2|H3|H4|H5|H6|LI|BLOCKQUOTE)$/.test(node.tagName)) break;
+            node = node.parentNode;
+        }
+        if (!node || node === document.body) return '';
+        return (node.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+    }
+
+    // 在容器内按原文匹配并包裹 mark（单文本节点内；跨节点暂跳过，避免破坏正文 DOM）
+    function wrapMarkIn(container, text) {
+        if (!text) return null;
+        var walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+        var nodes = [], offsets = [], full = '', n;
+        while ((n = walker.nextNode())) { nodes.push(n); offsets.push(full.length); full += n.textContent; }
+        var idx = full.indexOf(text);
+        if (idx < 0) return null;
+        var endIdx = idx + text.length;
+        var si = -1, so = 0, ei = -1, eo = 0;
+        for (var i = 0; i < nodes.length; i++) {
+            var s = offsets[i], e = offsets[i] + nodes[i].textContent.length;
+            if (si < 0 && idx >= s && idx <= e) { si = i; so = idx - s; }
+            if (ei < 0 && endIdx >= s && endIdx <= e) { ei = i; eo = endIdx - s; }
+        }
+        if (si < 0 || ei < 0 || si !== ei) return null;   // 跨文本节点（粗体/斜体分隔）暂跳过
+        var tn = nodes[si];
+        var before = document.createTextNode(tn.textContent.slice(0, so));
+        var mid = document.createTextNode(tn.textContent.slice(so, eo));
+        var after = document.createTextNode(tn.textContent.slice(eo));
+        var mark = document.createElement('mark');
+        mark.className = 'concept-hl';
+        mark.setAttribute('data-term', text);
+        mark.setAttribute('data-kind', 'concept');
+        mark.setAttribute('data-source', text);
+        mark.appendChild(mid);
+        var parent = tn.parentNode;
+        parent.replaceChild(after, tn);
+        parent.insertBefore(mark, after);
+        parent.insertBefore(before, mark);
+        return mark;
+    }
+
+    function restoreOne(content, item) {
+        var source = item.source_text || item.term;
+        if (!source) return;
+        if (!content.isConnected) return;          // 内容已被换章替换 → 跳过（防孤儿弹窗）
+        if (_restoredSources[source]) return;      // 已恢复过 → 跳过（防重复包裹）
+        var anchor = (item.anchor_text || '').replace(/\s+/g, ' ');
+        // 优先按段落锚点定位到原段落（避免短词条全书误标）
+        var target = null;
+        if (anchor) {
+            var paras = content.querySelectorAll('p, div, h1, h2, h3, h4, h5, h6, li, blockquote');
+            for (var i = 0; i < paras.length; i++) {
+                if ((paras[i].textContent || '').replace(/\s+/g, ' ').indexOf(anchor) >= 0) {
+                    target = paras[i]; break;
+                }
+            }
+        }
+        if (!target) return;   // 锚点不在本章 → 短词条不全书匹配，避免误标
+        var mark = wrapMarkIn(target, source);
+        if (mark) {
+            _restoredSources[source] = true;
+            // 补齐锚点：恢复的 mark 也带 data-anchor，弹窗保存时不会把 DB 锚点覆盖成空
+            mark.setAttribute('data-anchor', paraPrefixOf(mark));
+            initConceptMark(mark);   // 恢复弹窗（hover 显示）
+        }
+    }
+
+    // 拉取概念列表（带缓存：书未变则首次拉取后复用，换章不重复请求）
+    async function _getConItems() {
+        if (!_conListCache) {
+            var r = await fetch('/api/layer/concept_list/' + BOOK_ID);
+            _conListCache = (await r.json()).items || [];
+        }
+        return _conListCache;
+    }
+
+    async function restoreHighlights() {
+        var content = document.getElementById('ch-content');
+        if (!content || !content.isConnected) return;   // 内容已被替换则跳过
+        try {
+            var con = await _getConItems();
+            for (var i = 0; i < con.length; i++) restoreOne(content, con[i]);
+        } catch (e) { console.error('恢复高亮失败', e); }
+    }
+
+    return {
+        prepareNewChapter: prepareNewChapter,
+        restoreFromDom: restoreFromDom,
+        restore: restoreHighlights,
+    };
+})();
+
+// ═══════════════════════════════════════════════════════
+// 语义层（段落级备注栏）—— 独立 IIFE 模块 SemMargin
+// 每段一条语义解释：右栏灰字简短解释（顶端对齐段落顶部）。
+// 点击简短解释 → 展开「整段详细解释 + 逐句解释」；悬停逐句解释 → 正文对应句高亮；
+// 与下一条解释临界处灰线截断，悬停浮现剩余内容，鼠标移开复原。
+// 数据：/api/layer/para_semantic/{book_id}?chapter={idx}（source_text=段落原文，服务端按该章过滤），
+// 前端按规范化原文匹配正文段落（正文段落 = 叶子块元素按 <br> 切分）。
+// ═══════════════════════════════════════════════════════
+var activeAgentRunId = null;
+var activeAgentStream = null;
+var activeAgentEventText = '';
+
+function agentRunUrl(suffix) {
+    return '/api/agent/' + encodeURIComponent(BOOK_ID) + '/runs' + (suffix || '');
+}
+function setAgentMessage(text) {
+    var panel = document.getElementById('agent-run-panel');
+    if (!panel) return;
+    panel.style.display = text ? 'block' : 'none';
+    document.getElementById('agent-run-text').textContent = text || '';
+}
+function showAgentRun(runId) {
+    activeAgentRunId = runId;
+    if (activeAgentStream) activeAgentStream.close();
+    if (!runId) return;
+    fetch(agentRunUrl('/' + encodeURIComponent(runId))).then(function(r) { return r.json(); }).then(function(run) {
+        showAgentRunSnapshot(runId, run);
+        if (['queued','running','canceling'].indexOf(run.status) >= 0) {
+            activeAgentStream = new EventSource(agentRunUrl('/' + encodeURIComponent(runId) + '/events'));
+            activeAgentStream.addEventListener('update', function(ev) {
+                try { var data = JSON.parse(ev.data); activeAgentEventText = data.message || data.stage || ''; } catch (_) {}
+                showAgentRunSnapshot(runId);
+            });
+            activeAgentStream.addEventListener('end', function() {
+                if (activeAgentStream) activeAgentStream.close();
+                activeAgentStream = null;
+                showAgentRunSnapshot(runId);
+                if (typeof SemMargin !== 'undefined') SemMargin.refresh();
+            });
+        }
+    }).catch(function(e) { setAgentMessage('读取任务状态失败：' + e); });
+}
+function showAgentRunSnapshot(runId, loaded) {
+    var request = loaded ? Promise.resolve(loaded) : fetch(agentRunUrl('/' + encodeURIComponent(runId))).then(function(r) { return r.json(); });
+    request.then(function(run) {
+        var c = run.counts || {}, total = run.tasks ? run.tasks.length : 0;
+        var pending = (c.pending || 0) + (c.conflict || 0), failed = c.failed || 0;
+        var firstError = (run.tasks || []).find(function(task) { return task.error; });
+        setAgentMessage('任务 ' + run.status + ' · 已完成 ' + (c.published || 0) + '/' + total + ' · 待核 ' + pending + ' · 失败 ' + failed + (firstError ? ' · 原因：' + firstError.error.slice(0, 120) : '') + (activeAgentEventText ? ' · ' + activeAgentEventText : ''));
+        document.getElementById('agent-pending-toggle').style.display = pending ? '' : 'none';
+        var retryable = failed + pending + (c.canceled || 0) + (c.interrupted || 0);
+        document.getElementById('agent-retry').style.display = ['failed','needs_review','interrupted','canceled'].indexOf(run.status) >= 0 && retryable ? '' : 'none';
+        document.getElementById('agent-cancel').style.display = ['queued','running','canceling'].indexOf(run.status) >= 0 ? '' : 'none';
+    });
+}
+function submitAgentRun(body, button) {
+    var original = button ? (button.dataset.originalText || button.textContent) : '';
+    if (button) { button.dataset.originalText = original; button.disabled = true; button.textContent = '正在排队…'; }
+    setAgentMessage('正在统计并排队段落…');
+    fetch(agentRunUrl(''), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+        .then(function(r) { return r.json().then(function(data) { if (!r.ok) throw new Error(data.detail && data.detail.message || data.detail || r.statusText); return data; }); })
+        .then(function(data) {
+            if (!data.id) { setAgentMessage(data.status === 'nothing_to_do' ? '当前范围没有待生成段落。' : '没有新任务。'); return; }
+            activeAgentEventText = data.existing ? '已找到正在运行的相同段落任务' : '预计处理 ' + data.estimated_count + ' 段';
+            showAgentRun(data.id);
+        }).catch(function(error) { setAgentMessage('启动失败：' + error.message); })
+        .finally(function() { if (button) { button.disabled = false; button.textContent = original; } });
+}
+function createParagraphRun(chapterIdx, paragraphIndex, button) {
+    submitAgentRun({paragraph_ref:{chapter_idx:chapterIdx,paragraph_index:paragraphIndex},mode:document.getElementById('agent-mode').value,spec_type:document.getElementById('agent-spec').value}, button);
+}
+function createChapterRun() {
+    var button = document.querySelector('#agent-controls button');
+    submitAgentRun({chapter_idx:currentChapter,mode:document.getElementById('agent-mode').value,spec_type:document.getElementById('agent-spec').value}, button);
+}
+function cancelAgentRun() {
+    if (!activeAgentRunId) return;
+    fetch(agentRunUrl('/' + encodeURIComponent(activeAgentRunId) + '/cancel'), {method:'POST'}).then(function() { activeAgentEventText = '已请求取消'; showAgentRunSnapshot(activeAgentRunId); });
+}
+function retryAgentRun() {
+    if (!activeAgentRunId) return;
+    fetch(agentRunUrl('/' + encodeURIComponent(activeAgentRunId) + '/retry'), {method:'POST'}).then(function(r) { return r.json().then(function(x) { if (!r.ok) throw new Error(x.detail || r.statusText); return x; }); }).then(function(x) { if (x.id) showAgentRun(x.id); }).catch(function(e) { setAgentMessage('重试失败：' + e.message); });
+}
+function toggleAgentPending() {
+    var box = document.getElementById('agent-pending-list');
+    if (box.style.display === 'block') { box.style.display = 'none'; return; }
+    box.style.display = 'block'; box.textContent = '正在读取待核稿…';
+    fetch(agentRunUrl('/pending')).then(function(r) { return r.json(); }).then(function(data) {
+        box.textContent = '';
+        (data.items || []).forEach(function(item) {
+            var row = document.createElement('div'); row.className = 'agent-pending-item';
+            var title = document.createElement('strong'); title.textContent = '第 ' + (item.chapter_idx + 1) + ' 章 · 段落 ' + (item.paragraph_index + 1) + ' · ' + item.state; row.appendChild(title);
+            var source = document.createElement('pre'); source.textContent = '原文：' + item.source_text + '\n\n简短解释：' + item.short + '\n\n具体解释：' + item.detail + '\n\n复核：' + JSON.stringify(item.review || {}, null, 2); row.appendChild(source);
+            var adopt = document.createElement(item.state === 'conflict' ? 'span' : 'button');
+            if (item.state === 'conflict') { adopt.textContent = '原文或已有解释已变更；请重新生成或手动处理此候选稿。'; }
+            else { adopt.type = 'button'; adopt.textContent = '采纳并发布'; }
+            adopt.onclick = item.state === 'conflict' ? null : function() {
+                adopt.disabled = true;
+                fetch(agentRunUrl('/' + encodeURIComponent(item.run_id) + '/adopt'), {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:item.task_id})})
+                    .then(function(r) { return r.json().then(function(x) { if (!r.ok) throw new Error(x.detail || r.statusText); return x; }); })
+                    .then(function() { row.remove(); if (typeof SemMargin !== 'undefined' && item.chapter_idx === currentChapter) SemMargin.refresh(); })
+                    .catch(function(e) { adopt.disabled = false; setAgentMessage('采纳失败：' + e.message); });
+            }; row.appendChild(adopt); box.appendChild(row);
+        });
+        if (!data.items || !data.items.length) box.textContent = '当前没有待核稿。';
+    }).catch(function(e) { box.textContent = '读取失败：' + e.message; });
+}
+function restoreAgentRunState() {
+    fetch(agentRunUrl('')).then(function(r) { return r.json(); }).then(function(data) {
+        var items = data.items || [];
+        var run = items.find(function(x) { return ['queued','running','canceling'].indexOf(x.status) >= 0; }) || items.find(function(x) { return ['needs_review','failed','interrupted','canceled'].indexOf(x.status) >= 0; });
+        if (run) showAgentRun(run.id);
+    }).catch(function() {});
+}
+
+var SemMargin = (function() {
+    var GAP = 10;        // 与下一条解释的间隔（临界位置）
+    var MIN_H = 40;      // 截断时至少保留的高度
+    var NOTE_W = 300;    // 简短解释目标宽度
+    var NOTE_MIN = 120;  // 备注栏可压缩的最小宽度
+    var TEXT_MAX = 700;  // 正文列最大宽（与 CSS 一致）
+    var TEXT_MIN = 340;  // 正文列可压缩的最小宽度
+    var DETAIL_W = 384;                   // 具体解释两栏总宽（左「整段详细解释」约占 38%，右「逐句解释」为余下约 62%）
+    var STACK_DETAIL = false;             // true = 具体解释固定“详细在上、逐句在下”（两栏放不下时自动如此）
+    var BLOCK_SEL = 'p, div, h1, h2, h3, h4, h5, h6, li, blockquote';
+    var _items = null;   // 当前章条目
+    var _cache = {};     // 章索引 → 该章条目（每章一次拉取，换回不重复请求）
+    var _byNorm = {};    // 规范化段落原文 → 条目
+    var _byPosition = {}; // 逻辑章 + 段落序号 → 条目
+    var _open = null;    // 当前展开为详细解释的备注
+
+    function normText(t) {
+        return (t || '').normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+    }
+
+    // ── 是否需要解释：标题 / 页眉 / 书目行等不挂解释 ──
+    // 判据（在《精神现象学》1738 段上实测：判出 312 段不需要，均为标题/书目行，未误杀正文）：
+    // ① 规范化后不足 25 字（如「第二章　知覉；事物和幻觉」「［一、事物的简单概念］」）
+    // ② 没有句末标点（中文 。！？ / 西文 .!?）——标题、目录、书目行都没有
+    // ③ 行首为目录式序号（第X章 / 一、 / （1））
+    var HEADING_RE = /^[\[［【(（]?(第[一二三四五六七八九十百零两0-9]+[章节篇部分卷]|[一二三四五六七八九十]+[、．.]|[0-9]+[、．.)）])/;
+    // ③ 只在“标题那么短”时才按行首序号排除：有的书把章标题与正文粘成一段
+    //    （如《江村经济》「第一章：前 言　　这是一本描述…」），只看开头会把整段正文误判成标题
+    var HEADING_MAX = 60;   // 规范化长度超过此值就不再按“标题开头”排除
+    function needsNote(text) {
+        var t = (text || '').trim();
+        var n = normText(t);
+        if (n.length < 25) return false;
+        var term = /[\u4e00-\u9fff]/.test(t) ? /[。！？]/ : /[.!?]/;
+        if (!term.test(t)) return false;
+        if (n.length <= HEADING_MAX && HEADING_RE.test(n)) return false;
+        return true;
+    }
+
+    function indexByNorm(items) {
+        _byNorm = {};
+        _byPosition = {};
+        items.forEach(function(it) {
+            var n = normText(it.source_text);
+            if (n) _byNorm[n] = it;
+            if (typeof it.chapter_idx === 'number' && typeof it.paragraph_index === 'number')
+                _byPosition[it.chapter_idx + ':' + it.paragraph_index] = it;
+        });
+    }
+
+    // 拉该章条目（?chapter=阅读器章索引，服务端按该章正文过滤）；失败则本次无备注
+    async function ensureData(chidx) {
+        var items = _cache[chidx];
+        if (!items) {
+            items = [];
+            try {
+                var r = await fetch('/api/layer/para_semantic/' + encodeURIComponent(BOOK_ID) + '?chapter=' + chidx);
+                items = ((await r.json()).items) || [];
+            } catch (e) { console.error('语义层（段落级）请求失败：', e); }
+            _cache[chidx] = items;
+        }
+        _items = items;
+        indexByNorm(items);
+        return items;
+    }
+
+    // ── 正文段落切分：块元素按 <br> 切成逻辑段落（txt 书整章是一个 <p> + 多个 <br>）──
+    function segmentsOf(block) {
+        var segs = [], cur = [];
+        function flush() {
+            if (cur.length) {
+                var text = cur.map(function(n) { return n.textContent; }).join('');
+                var norm = normText(text);
+                if (norm) segs.push({ nodes: cur, text: text, norm: norm });
+            }
+            cur = [];
+        }
+        Array.prototype.slice.call(block.childNodes).forEach(function(node) {
+            if (node.nodeType === 1 && node.tagName === 'BR') { flush(); return; }
+            cur.push(node);
+        });
+        flush();
+        return segs;
+    }
+
+    // ── 匹配并挂备注：命中的段落包进 .sem-para（相对定位块）──
+    function attach() {
+        var content = document.getElementById('ch-content');
+        if (!content || !content.isConnected || !_items) return;
+        var wraps = [], paragraphIndex = 0;
+        Array.prototype.forEach.call(content.querySelectorAll(BLOCK_SEL), function(block) {
+            if (block.dataset.semDone === '1') return;
+            if (block.querySelector(BLOCK_SEL)) return;   // 非叶子块：交给内部块级元素处理
+            var segments = segmentsOf(block);
+            segments.forEach(function(s) { s.paragraphIndex = paragraphIndex++; });
+            var hit = segments.filter(function(s) { return needsNote(s.text); });
+            if (!hit.length) return;
+            block.dataset.semDone = '1';
+            hit.forEach(function(s) {
+                var wrap = document.createElement('span');
+                wrap.className = 'sem-para';
+                wrap.dataset.agentChapter = currentChapter;
+                wrap.dataset.agentParagraph = s.paragraphIndex;
+                block.insertBefore(wrap, s.nodes[0]);
+                s.nodes.forEach(function(n) { wrap.appendChild(n); });
+                dropOneBr(wrap);   // 段内换行改由块级段包提供，去掉多余的一个 <br>
+                wrap._item = _byPosition[currentChapter + ':' + s.paragraphIndex] || _byNorm[s.norm];
+                if (wrap._item) { buildNote(wrap); wraps.push(wrap); }
+                else buildGenerate(wrap, currentChapter, s.paragraphIndex);
+            });
+        });
+        layout();
+    }
+
+    function buildGenerate(wrap, chapterIdx, paragraphIndex) {
+        var slot = document.createElement('span');
+        slot.className = 'sem-generate';
+        var button = document.createElement('button');
+        button.type = 'button'; button.textContent = '生成解释'; button.dataset.originalText = button.textContent;
+        button.title = '为这一段生成语义解释';
+        button.onclick = function(e) { e.preventDefault(); e.stopPropagation(); createParagraphRun(chapterIdx, paragraphIndex, button); };
+        slot.appendChild(button); wrap.appendChild(slot);
+    }
+
+    // ── 段包把段落变成块级后，原来负责换行的 <br> 会渲染成一个空行（前后段距离被拉开）──
+    // 去掉紧邻的一个 <br>（跳过空白文本节点），把段落间距恢复成原文的，不多不少。
+    // 相邻还有 <br>（原文的空行）则保留，故变窄而非变密。
+    function adjacentBr(el, dir) {
+        for (var n = dir > 0 ? el.nextSibling : el.previousSibling; n;) {
+            if (n.nodeType === 1 && n.tagName === 'BR') return n;
+            if (n.nodeType === 3 && !n.textContent.trim()) { n = dir > 0 ? n.nextSibling : n.previousSibling; continue; }
+            return null;
+        }
+        return null;
+    }
+    function dropOneBr(wrap) {
+        var br = adjacentBr(wrap, 1) || adjacentBr(wrap, -1);
+        if (br) br.remove();
+    }
+
+    function buildNote(wrap) {
+        var note = document.createElement('span');
+        note.className = 'sem-note';
+        note._wrap = wrap;
+        note._item = wrap._item;
+        setShort(note);
+        note.addEventListener('mouseenter', function() { note.classList.add('revealed'); });
+        note.addEventListener('mouseleave', function() {
+            note.classList.remove('revealed');
+            note.classList.remove('loose');
+            clearSentenceHL(wrap);
+            if (note._mode === 'detail') showShort(note);   // 移开具体解释区域 → 回到简短解释
+        });
+        note.addEventListener('click', function(e) {
+            e.stopPropagation();                       // 阻止冒泡到“点击别处收起”
+            if (note._mode === 'short') showDetail(note);
+        });
+        wrap._note = note;
+        wrap.appendChild(note);
+    }
+
+    function setShort(note) {
+        var s = document.createElement('span');
+        s.className = 'sn-short';
+        s.textContent = note._item.short || '';
+        note.textContent = '';
+        note.appendChild(s);
+        note.classList.remove('revealed');
+        note._mode = 'short';
+    }
+
+    function showDetail(note) {
+        var it = note._item;
+        var d = document.createElement('span');
+        d.className = 'sn-detail';
+        var left = document.createElement('span');
+        left.className = 'sn-left';
+        left.textContent = it.detail || '';
+        var right = document.createElement('span');
+        right.className = 'sn-right';
+        var nSen = wrapSentences(note._wrap);   // 正文分句（悬停高亮用），返回句数
+        note._loose = (nSen !== (it.sentences || []).length);   // 位数不吻合 → 不逐句指位
+        (it.sentences || []).forEach(function(txt, i) {
+            if (!(txt || '').trim()) return;   // 素平句无解释 → 不生成条目（编号仍对齐）
+            var item = document.createElement('span');
+            item.className = 'sn-item';
+            item.setAttribute('data-si', i);
+            item.textContent = (nSen > 1 ? (i + 1) + '. ' : '') + txt;
+            item.addEventListener('mouseenter', function() { setSentenceHL(note._wrap, i, true, note._loose); });
+            item.addEventListener('mouseleave', function() { setSentenceHL(note._wrap, i, false, note._loose); });
+            right.appendChild(item);
+        });
+        d.appendChild(left);
+        d.appendChild(right);
+        note.textContent = '';
+        note.appendChild(d);
+        note._mode = 'detail';
+        _open = note;
+        if (note._loose) note.classList.add('loose');
+        layout();
+    }
+
+    function showShort(note) {
+        setShort(note);
+        if (_open === note) _open = null;
+        layout();
+    }
+
+    // 点击别处 → 收起为简短解释（鼠标移开同样收起，两道保险）
+    document.addEventListener('click', function() {
+        if (_open) showShort(_open);
+    });
+
+    // ── 正文分句：按 。！？ 断句（吸收尾随引号/括号），跨文本节点的句子共用句序 ──
+    var SENT_END = /[。！？.!?]/;
+    var TAIL = /[”』」）)]/;
+    function splitSentences(text) {
+        var out = [], cur = '';
+        for (var i = 0; i < text.length; i++) {
+            cur += text[i];
+            if (SENT_END.test(text[i])) {
+                while (i + 1 < text.length && TAIL.test(text[i + 1])) cur += text[++i];
+                out.push(cur);
+                cur = '';
+            }
+        }
+        if (cur) out.push(cur);
+        return out;
+    }
+
+    var SENT_TAIL = /[。！？.!?][”』」）)]*$/;   // 句末（含尾随引号/括号）才是“这一句结束”
+    function wrapSentences(wrap) {
+        if (wrap._sentDone) return wrap._senCount;
+        wrap._sentDone = true;
+        var walker = document.createTreeWalker(wrap, NodeFilter.SHOW_TEXT, null);
+        var nodes = [], n;
+        while ((n = walker.nextNode())) {
+            var p = n.parentNode;
+            if (p && p.closest && p.closest('.sem-note')) continue;   // 备注自身不参与分句
+            if (n.textContent) nodes.push(n);
+        }
+        // 句序按“已收尾的句数”推进：同一句被 <mark> 等拆到多个文本节点时各片段共用同一序号，
+        // 上一个节点末句已收尾则下一节点接下一句（否则会两句话同号、句数少算 → 精确指位失效）
+        var count = 0, lastEnded = true;
+        nodes.forEach(function(tn) {
+            var parts = splitSentences(tn.textContent);
+            if (!parts.length) return;
+            var frag = document.createDocumentFragment();
+            parts.forEach(function(txt) {
+                // 首尾空白（段首缩进、段末换行）一律留在 span 之外：高亮只作用于文字本身，
+                // 不管缩进是粘在第一句里还是单独的空白节点，表现都一致
+                var lead = txt.match(/^\s+/);
+                if (lead) { frag.appendChild(document.createTextNode(lead[0])); txt = txt.slice(lead[0].length); }
+                var tail = txt.match(/\s+$/);
+                if (tail) txt = txt.slice(0, txt.length - tail[0].length);
+                if (txt) {
+                    var sp = document.createElement('span');
+                    sp.className = 'sem-sen';
+                    sp.setAttribute('data-si', count);
+                    sp.textContent = txt;
+                    frag.appendChild(sp);
+                    lastEnded = SENT_TAIL.test(txt);
+                    if (lastEnded) count++;
+                }
+                if (tail) frag.appendChild(document.createTextNode(tail[0]));
+            });
+            tn.parentNode.replaceChild(frag, tn);
+        });
+        var allText = nodes.map(function(node) { return node.textContent; }).join('').replace(/\s+$/, '');
+        lastEnded = SENT_TAIL.test(allText);
+        if (count > 0 && !lastEnded) count++;   // 末尾这句没有句末标点，也算一句
+        wrap._senCount = count;
+        return count;
+    }
+
+    // 悬停逐句解释 → 高亮正文对应句；位数不吻合（_loose）时只淡提示整段，不指错句。
+    // 高亮同时把该句滚进可视区（备注比段落长时，目标句可能在屏外）。
+    function setSentenceHL(wrap, si, on, loose) {
+        var els = loose
+            ? Array.prototype.slice.call(wrap.querySelectorAll('.sem-sen'))
+            : Array.prototype.slice.call(wrap.querySelectorAll('.sem-sen[data-si="' + si + '"]'));
+        if (!els.length) return;
+        els.forEach(function(el) {
+            el.classList.toggle('sem-sen-hl', on && !loose);
+            el.classList.toggle('sem-sen-loose', on && loose);
+        });
+        if (on && !loose) els[0].scrollIntoView({ block: 'nearest' });
+    }
+
+    function clearSentenceHL(wrap) {
+        Array.prototype.forEach.call(wrap.querySelectorAll('.sem-sen-hl, .sem-sen-loose'), function(el) {
+            el.classList.remove('sem-sen-hl');
+            el.classList.remove('sem-sen-loose');
+        });
+    }
+
+    // ── 截断：每条解释只占到“下一条解释顶端”前（临界处画灰线）；
+    // 悬停/展开时浮现全部内容（z-index 抬升，覆盖下方解释）──
+    // ── 备注首行与段落首行的“文字顶部”对齐 ──
+    // 段落 1.8 行高 + serif、备注 1.55 行高 + sans，只靠 top:0（盒顶对齐）看起来会差几像素，
+    // 所以逐个量：段落首个可见字符的盒顶 − 备注首字符的盒顶 = 该下移的量。
+    // 无布局环境（如测试）量不到就清掉 inline top，回落到 CSS 的 top:.28em。
+    function firstCharTop(el, skipNotes) {
+        var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+        var n;
+        while ((n = walker.nextNode())) {
+            if (!n.textContent || !n.textContent.trim()) continue;
+            var p = n.parentNode;
+            if (skipNotes && p && p.closest && p.closest('.sem-note')) continue;   // 段落量测时跳过备注自身文本
+            var i = n.textContent.search(/\S/);
+            if (i < 0) continue;
+            try {
+                var r = document.createRange();
+                r.setStart(n, i);
+                r.setEnd(n, Math.min(n.textContent.length, i + 1));
+                var rect = r.getBoundingClientRect();
+                if (rect && (rect.height || rect.width)) return rect.top;
+            } catch (e) { return null; }
+        }
+        return null;
+    }
+
+    function layout() {
+        var content = document.getElementById('ch-content');
+        if (!content || !content.isConnected) return;
+        // ── 列宽自适应（目录栏拉宽时备注栏不会被推到屏外）──
+        // 正文列在 [TEXT_MIN, TEXT_MAX] 内让宽；优先留出备注栏的最小宽度，
+        // 备注栏再在 [NOTE_MIN, 目标宽] 内吃掉剩余空间。
+        var cv = document.getElementById('chapter-view');
+        var mainW = mainEl.clientWidth || 0;
+        var cvLeft = cv.getBoundingClientRect().left - mainEl.getBoundingClientRect().left;   // 含左边距
+        var room = mainW - cvLeft - 80;                                   // 扣掉正文左右 padding
+        var textW = Math.max(TEXT_MIN, Math.min(TEXT_MAX, room - 28 - NOTE_MIN));
+        if (Math.abs((parseFloat(cv.style.width) || 0) - textW) > 0.5) cv.style.width = textW + 'px';
+        var availNote = Math.max(0, mainW - cvLeft - textW - 76);         // 备注左缘（正文右缘+28）到 main 右缘
+
+        var wraps = [];
+        Array.prototype.forEach.call(content.querySelectorAll('.sem-para'), function(w) {
+            if (w._note) wraps.push(w);
+        });
+        wraps.sort(function(a, b) { return a.getBoundingClientRect().top - b.getBoundingClientRect().top; });
+
+        // 读阶段：先算好每条备注要下移多少（读写分开，避免逐条读改引发布局抖动）
+        var tops = wraps.map(function(w) {
+            var pTop = firstCharTop(w, true);
+            var nTop = firstCharTop(w._note, false);
+            return (pTop === null || nTop === null) ? null : (pTop - nTop);
+        });
+
+        wraps.forEach(function(w, i) {
+            var note = w._note;
+            note.classList.remove('clipped');
+            note.style.maxHeight = '';
+            if (tops[i] !== null) note.style.top = tops[i].toFixed(1) + 'px';   // 首行文字顶端对齐对应段
+            else note.style.top = '';                                           // 量不到 → 回落到 CSS 兜底值
+            var target = (note._mode === 'detail') ? DETAIL_W : NOTE_W;
+            note.style.width = Math.min(target, Math.max(NOTE_MIN, availNote)) + 'px';
+            note.classList.toggle('stacked', note._mode === 'detail' && (STACK_DETAIL || availNote < DETAIL_W));
+            var next = wraps[i + 1];
+            if (!next) return;   // 最后一条：下方无解释，无需截断
+            var limit = next.getBoundingClientRect().top - w.getBoundingClientRect().top - GAP;
+            if (limit < MIN_H) limit = MIN_H;
+            if (note.scrollHeight > limit) {
+                note.style.maxHeight = limit + 'px';
+                note.classList.add('clipped');
+            }
+        });
+    }
+
+    var _rzTimer = null;
+    window.addEventListener('resize', function() {
+        clearTimeout(_rzTimer);
+        _rzTimer = setTimeout(layout, 200);
+    });
+
+    // 换章/回到已访问章后调用：拉该章数据 + 挂备注
+    async function afterChapter() {
+        _open = null;   // 旧章备注可能已进缓存，不保留展开态
+        await ensureData(currentChapter);
+        attach();
+    }
+
+    async function refresh() {
+        var content = document.getElementById('ch-content');
+        if (!content) return;
+        Array.prototype.forEach.call(content.querySelectorAll('span.sem-sen'), function(span) {
+            span.replaceWith(document.createTextNode(span.textContent));
+        });
+        Array.prototype.forEach.call(content.querySelectorAll('.sem-para'), function(wrap) {
+            var slot = wrap.querySelector('.sem-note, .sem-generate');
+            if (slot) slot.remove();
+            var fragment = document.createDocumentFragment();
+            while (wrap.firstChild) fragment.appendChild(wrap.firstChild);
+            wrap.replaceWith(fragment);
+        });
+        content.querySelectorAll('[data-sem-done="1"]').forEach(function(block) { delete block.dataset.semDone; });
+        _cache[currentChapter] = null;
+        await afterChapter();
+    }
+
+    return {
+        afterChapter: afterChapter,
+        refresh: refresh,
+        layout: layout,
+    };
+})();
+
+// 页面加载完成后恢复已记录的高亮/书签（离开页面再回来依然可见）
+setTimeout(function() { AuxLayer.restore(); SemMargin.afterChapter(); restoreAgentRunState(); }, 400);
+
+// ── 笔记页抽屉：右侧小方框向左拖动拉出（宽度=笔记页展示宽度），向右拖过最小宽度即收起 ──
+// 用 iframe 内嵌 /notes/{book_id}：笔记页自身完全不动，宽度由这里手动限定
+// ── 笔记页抽屉（右侧）：开关型 —— 点最右小方框展开，收起键在全书层页面内部（.nb-collapse）──
+var notesDrawer = document.getElementById('notes-drawer');
+var notesFrame = document.getElementById('notes-frame');
+var notesGrip = document.getElementById('notes-grip');
+var NOTES_URL = '/notes/' + encodeURIComponent(BOOK_ID);
+var NOTES_DEFAULT_W = 440;                 // 展开宽度（固定，不拖）
+var NOTES_GAP = 28;                        // 与正文右边界再留些距离，不贴上去
+
+// 展开宽度上限：抽屉左缘不越过正文右边界（再留 NOTES_GAP）；正文右边界每次实时取
+function notesMaxWidth() {
+    var el = document.getElementById('ch-content');
+    var right = el ? el.getBoundingClientRect().right : 0;
+    if (!right || right > window.innerWidth) right = window.innerWidth;
+    return Math.max(220, Math.round(window.innerWidth - right) - NOTES_GAP);
+}
+
+function openNotesDrawer() {
+    if (!notesFrame.getAttribute('src')) notesFrame.setAttribute('src', NOTES_URL);   // 首次展开才加载
+    notesDrawer.classList.add('open');
+    notesDrawer.style.width = Math.min(NOTES_DEFAULT_W, notesMaxWidth()) + 'px';
+    notesGrip.style.display = 'none';      // 展开后不再有外凸的把手
+}
+
+// 由全书层页面里的收起键调用（同源 iframe：window.parent.closeNotesDrawer()）
+function closeNotesDrawer() {
+    notesDrawer.classList.remove('open');
+    notesGrip.style.display = 'flex';
+}
+
+notesGrip.addEventListener('click', openNotesDrawer);
+
+// 窗口尺寸变化后重新夹紧宽度，避免越过正文右边界
+window.addEventListener('resize', function() {
+    if (notesDrawer.classList.contains('open')) {
+        notesDrawer.style.width = Math.min(NOTES_DEFAULT_W, notesMaxWidth()) + 'px';
+    }
+});
+
+</script>
+</body>
+</html>

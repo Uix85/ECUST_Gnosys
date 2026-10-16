@@ -1,0 +1,29 @@
+{# ═══════════════════════════════════════════════
+   VSCode 风格滚动条（全局）：灰色圆角矩形 thumb、透明轨道，
+   滚动中显示，停止滚动 ~0.9s 后隐藏（监听捕获级 scroll 事件）
+   ═══════════════════════════════════════════════ #}
+<style>
+    ::-webkit-scrollbar { width:10px; height:10px; }
+    ::-webkit-scrollbar-track { background:transparent; }
+    ::-webkit-scrollbar-corner { background:transparent; }
+    ::-webkit-scrollbar-thumb { background:transparent; border-radius:5px; border:2px solid transparent; background-clip:padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background:rgba(121,121,121,.6); background-clip:padding-box; }
+    /* 滚动中：显示 thumb（.scrolling 由下方 JS 在 scroll 时挂到滚动容器上） */
+    .scrolling::-webkit-scrollbar-thumb { background:rgba(121,121,121,.45); background-clip:padding-box; }
+    .scrolling::-webkit-scrollbar-thumb:hover { background:rgba(121,121,121,.6); background-clip:padding-box; }
+    /* Firefox */
+    * { scrollbar-width:thin; scrollbar-color:transparent transparent; }
+    .scrolling { scrollbar-color:rgba(121,121,121,.45) transparent; }
+</style>
+<script>
+(function() {
+    var HIDE_DELAY = 900;
+    document.addEventListener('scroll', function(e) {
+        var t = e.target;
+        if (!t || t.nodeType !== 1) return;              // 仅元素容器（document 级滚动不处理）
+        t.classList.add('scrolling');
+        clearTimeout(t._sbHide);
+        t._sbHide = setTimeout(function() { t.classList.remove('scrolling'); }, HIDE_DELAY);
+    }, true);
+})();
+</script>
