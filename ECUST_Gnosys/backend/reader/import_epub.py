@@ -178,6 +178,26 @@ def extract_metadata_robust(book_obj) -> BookMetadata:
 
 # --- SQLite processing ---
 
+def _extract_headings(html: str) -> str:
+    """从章 HTML 抽出标题层级，返回 JSON 字符串 `[{"level": 1, "text": "…"}]`。
+
+    为什么必须记：epub 源里的 `<h1>`-`<h6>` 就是结构真相（章→节→子节），
+    但段落是按 `<br>`/块级标签切平的，**不记下来结构就丢了** ——
+    语义层要「上承章节结构」、术语解释要用子节作为适用范围，全都要靠它。
+    历史数据里这个字段有的是那位另一版代码导入的（带 level+text），格式保持一致。
+
+    txt 源没有标题标签，这里会返回空数组 —— 那种情况改由 agent/outline.py 的
+    文本行模式推断兜底（见 backend/agent/outline.py）。
+    """
+    import re as _re
+    out = []
+    for m in _re.finditer(r"<h([1-6])\b[^>]*>(.*?)</h\1>", html or "", _re.S | _re.I):
+        text = " ".join(_re.sub(r"<[^>]+>", "", m.group(2)).split())
+        if text:
+            out.append({"level": int(m.group(1)), "text": text})
+    return json.dumps(out, ensure_ascii=False)
+
+
 def _split_paragraphs(html: str) -> list:
     """【段落拆分】将章节 HTML 拆分为段落列表（策略: <p> → <br> → \u3000\u3000）"""
     soup = BeautifulSoup(html, 'html.parser')
@@ -345,11 +365,14 @@ def process_epub_to_sqlite(epub_path: str, books_dir: str = None) -> str:
                 ch_title = t.title
                 break
         
-        # Insert chapter（heading_json 列为预留字段，恒写空数组，服务端不读取）
+        # heading_json：从正文里的 <h1>-<h6> 抽出层级（[{level, text}]）。
+        # 曾经这里恒传 '[]' 并在注释里自称「预留字段、服务端不读取」—— 那是错的：
+        # 语义层与术语层都要用这份结构（上承章节结构），epub 源的标题就在这里。
         db.execute(
             "INSERT INTO chapters (book_id, spine_order, href, title, content_html, content_text, heading_json) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (book_id, i, item.get_name(), ch_title, final_html, full_text_clean, '[]')
+            (book_id, i, item.get_name(), ch_title, final_html, full_text_clean,
+             _extract_headings(final_html))
         )
         chapter_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
         

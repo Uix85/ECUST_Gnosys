@@ -1793,13 +1793,24 @@ var SemMargin = (function() {
     });
 
     // ── 正文分句：按 。！？ 断句（吸收尾随引号/括号），跨文本节点的句子共用句序 ──
-    var SENT_END = /[。！？.!?]/;
-    var TAIL = /[”』」）)]/;
+    var SENT_END = /[。！？!?]/;
+    var TAIL = /[”』」）)】]/;
+    // ASCII 句点单独判：词内的点不算句末（让.瓦尔 / 3.5 / J.W. / 省略号）
+    //   ※ 与后端 agent/book.py._is_sentence_end、tools/semantic/check_semantic_para.py 同规则，
+    //   三处必须同步改动，否则“逐句解释”会与用户看到的一句错位。
+    function isSentenceEnd(text, i) {
+        var ch = text[i];
+        if (SENT_END.test(ch)) return true;
+        if (ch !== '.') return false;
+        var prev = i > 0 ? text[i - 1] : '', next = i + 1 < text.length ? text[i + 1] : '';
+        if (prev === '.' || next === '.') return false;
+        return !(prev && next && /[0-9A-Za-z\u4e00-\u9fff]/.test(prev) && /[0-9A-Za-z\u4e00-\u9fff]/.test(next));
+    }
     function splitSentences(text) {
         var out = [], cur = '';
         for (var i = 0; i < text.length; i++) {
             cur += text[i];
-            if (SENT_END.test(text[i])) {
+            if (isSentenceEnd(text, i)) {
                 while (i + 1 < text.length && TAIL.test(text[i + 1])) cur += text[++i];
                 out.push(cur);
                 cur = '';

@@ -27,6 +27,50 @@ def text_hash(text: str) -> str:
     return hashlib.md5(normalize_text(text).encode("utf-8")).hexdigest()
 
 
+# 分句规则：三处（L3 段落的 sentences、前端 splitSentences、L4 的定位工具）
+# 必须完全一致，否则“逐句解释”和用户看到的一句对不上。定义只留这一份：
+#   * 句末标点：。！？!?  以及“词外的” ASCII 句点
+#   * 句末后紧跟的引号/括号归给前一句（”）】等）
+_SENT_END_HARD = "。！？!?"
+_SENT_TAIL = re.compile(r"[”’」』）)】]")
+
+
+def _is_sentence_end(text: str, i: int) -> bool:
+    """句末判定。
+
+    ASCII 句点要特别当心：中文书里的 `让.瓦尔`（译名 OCR 伪影）、`3.5`、`J.W.`、
+    `...` 都不是句末。实测 1424 条 L3 记录里就有 1 条因此多切了一句。
+    规则：左右邻都是字母/数字（含汉字），或本身就是连续点的一部分 → 不算句末。
+    """
+    ch = text[i]
+    if ch in _SENT_END_HARD:
+        return True
+    if ch != ".":
+        return False
+    prev = text[i - 1] if i else ""
+    nxt = text[i + 1] if i + 1 < len(text) else ""
+    if prev == "." or nxt == ".":
+        return False                      # 省略号/点点点
+    return not (prev.isalnum() and nxt.isalnum())
+
+
+def split_sentences(text: str) -> list[str]:
+    """按句末标点切句，吸收尾随引号/括号。与前端 splitSentences 同规则。"""
+    out, cur, i, n = [], "", 0, len(text or "")
+    while i < n:
+        cur += text[i]
+        if _is_sentence_end(text, i):
+            while i + 1 < n and _SENT_TAIL.match(text[i + 1]):
+                i += 1
+                cur += text[i]
+            out.append(cur)
+            cur = ""
+        i += 1
+    if cur:
+        out.append(cur)
+    return out
+
+
 def book_db(book_id: str):
     safe = os.path.basename(book_id)
     if safe != book_id or not safe.endswith("_data"):
