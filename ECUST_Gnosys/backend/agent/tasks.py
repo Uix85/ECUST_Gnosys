@@ -3,7 +3,7 @@
 import re
 from pathlib import Path
 
-from agent.book import fingerprint
+from agent.book import fingerprint, split_sentences
 from agent.tools import book_reading_tools
 from agent.config import ROOT_DIR
 from agent.engine import SkillSpec, SubmitSpec, TaskSpec
@@ -23,10 +23,13 @@ REVIEW_FIELDS = ("approved", "issues", "alternatives")
 
 
 def sentence_count(text: str) -> int:
-    endings = re.findall(r"[。！？.!?]", text)
-    tail = re.sub(r"[”』」）)\s]+$", "", text)
-    has_unfinished = bool(text.strip()) and not (tail and tail[-1] in "。！？.!?")
-    return len(endings) + has_unfinished
+    """段落分句数。
+
+    直接复用 agent.book.split_sentences —— validator 的期望值、前端挂逐句解释的口径、
+    L4 定位工具定位“第几句”必须是同一把尺子，否则逐句解释会与用户看到的一句错位。
+    （原先这里另写了一套正则计数，与分句器在 `让.瓦尔` 这类词内 ASCII 点上会不一致。）
+    """
+    return len(split_sentences(text))
 
 
 # 引号里的内容分两类：真引文（必须逐字对上原文）与模型自己的措辞（用引号做强调/领起）。
