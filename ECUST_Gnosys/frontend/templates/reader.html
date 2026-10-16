@@ -201,7 +201,7 @@
 
 <script>window.BROWSER_BOOK_ID = {{ book_id | tojson }}; window.BROWSER_BOOK_TITLE = {{ book.metadata.title | tojson }}; window.BROWSER_IS_READER = true;</script>
 {% include 'browser_bar.html' %}
-{% include 'markdown_render.js' %}
+<script src="{{ url_for('static', path='js/markdown_render.js') }}"></script>
 {% include 'scrollbar.html' %}
 
 <div id="side-wrap">
