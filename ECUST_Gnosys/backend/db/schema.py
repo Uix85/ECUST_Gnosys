@@ -113,16 +113,81 @@ CREATE TABLE IF NOT EXISTS concept_layer (
 );
 CREATE INDEX IF NOT EXISTS idx_concept_layer_book ON concept_layer(book_id);
 
--- 8. concept_occurrences (概念→段落·预留)
-CREATE TABLE IF NOT EXISTS concept_occurrences (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    concept_id   INTEGER NOT NULL REFERENCES concept_layer(id),
-    paragraph_id INTEGER NOT NULL REFERENCES paragraphs(id)
+-- 8. concept_sense (L4 概念层·义项：一个词可以有一条或多条)
+-- 键 = (book_id, term_norm, sense_idx)。term 存「以原文为准」的词形，term_norm 是缓存键。
+-- 旧表 concept_occurrences 指向物理段落坐标系，与 L3/前端用的逻辑坐标对不上
+-- （实测 1/38 逐字匹配），已在 _drop_unusable_tables 里丢弃，重建为下面的逻辑坐标表。
+CREATE TABLE IF NOT EXISTS concept_sense (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id          INTEGER NOT NULL REFERENCES books(id),
+    term             TEXT    NOT NULL,
+    term_norm        TEXT    NOT NULL,
+    sense_idx        INTEGER NOT NULL,               -- 按首现位置排序，稳定不随重跑变
+    has_definition   TEXT    NOT NULL,               -- explicit / inferred / external
+    definition_note  TEXT,
+    confusion_types  TEXT,                           -- JSON 数组
+    reading          TEXT    NOT NULL,               -- 当前位置怎么读
+    common_reading   TEXT,                           -- 日常读法（日常义≠文本义时必填）
+    scope            TEXT    NOT NULL,               -- book / chapter / paragraph
+    range_note       TEXT,                           -- scope≠book 时说明它管到哪
+    chapter_range    TEXT,                           -- JSON [起, 止]
+    evolves_to_next  INTEGER NOT NULL DEFAULT 0,     -- 演化链
+    distinction_note TEXT,                           -- 多义时：为何是不同含义而非不同维度
+    dimensions_json  TEXT,                           -- JSON 数组（同一义项内部的面）
+    aliases_json     TEXT,                           -- JSON 数组（同义词形：自在存在↔自在自为）
+    emphasis_json    TEXT,                           -- JSON 对象；默认沉默，非空即有侧重
+    stance           TEXT NOT NULL DEFAULT 'normal', -- normal / boundary（处于义项过渡）
+    revision         INTEGER NOT NULL DEFAULT 1,
+    state            TEXT NOT NULL DEFAULT 'published',  -- published / pending（待核稿）
+    model            TEXT,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    UNIQUE(book_id, term_norm, sense_idx)
 );
-CREATE INDEX IF NOT EXISTS idx_co_concept   ON concept_occurrences(concept_id);
-CREATE INDEX IF NOT EXISTS idx_co_paragraph ON concept_occurrences(paragraph_id);
+CREATE INDEX IF NOT EXISTS idx_concept_sense_term ON concept_sense(book_id, term_norm);
 
--- 9. Agent runs and paragraph-level generated notes
+-- 9. concept_occurrence (义项成立的位置·逻辑坐标，与 agent_notes / L3 一致)
+CREATE TABLE IF NOT EXISTS concept_occurrence (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    sense_id        INTEGER NOT NULL REFERENCES concept_sense(id) ON DELETE CASCADE,
+    chapter_idx     INTEGER NOT NULL,
+    paragraph_index INTEGER NOT NULL,
+    sentence_index  INTEGER,
+    fingerprint     TEXT NOT NULL,
+    quote           TEXT,
+    role            TEXT NOT NULL DEFAULT 'evidence',   -- evidence / emphasis
+    UNIQUE(sense_id, chapter_idx, paragraph_index, sentence_index)
+);
+CREATE INDEX IF NOT EXISTS idx_concept_occ_sense ON concept_occurrence(sense_id);
+CREATE INDEX IF NOT EXISTS idx_concept_occ_pos ON concept_occurrence(chapter_idx, paragraph_index);
+
+-- 10. term_candidate (L0 录入期提名：统计提名 + 人工确认)
+CREATE TABLE IF NOT EXISTS term_candidate (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id       INTEGER NOT NULL REFERENCES books(id),
+    term          TEXT NOT NULL,
+    term_norm     TEXT NOT NULL,
+    chapter_count INTEGER NOT NULL,                  -- 覆盖章数（判核心概念的主信号）
+    total         INTEGER NOT NULL,                  -- 总出现次数
+    first_chapter INTEGER NOT NULL,
+    signals       TEXT NOT NULL,                     -- JSON：["glossary","title","coverage"]
+    state         TEXT NOT NULL DEFAULT 'nominated',  -- nominated / confirmed / rejected
+    rank          INTEGER,
+    updated_at    TEXT NOT NULL,
+    UNIQUE(book_id, term_norm)
+);
+
+-- 11. term_scan (按需扫描缓存：term → 全书分布，避免每次重扫 1.1s)
+CREATE TABLE IF NOT EXISTS term_scan (
+    book_id           INTEGER NOT NULL REFERENCES books(id),
+    term_norm         TEXT NOT NULL,
+    total             INTEGER NOT NULL,
+    distribution_json TEXT NOT NULL,
+    built_at          TEXT NOT NULL,
+    PRIMARY KEY (book_id, term_norm)
+);
+
+-- 12. Agent runs and paragraph-level generated notes
 CREATE TABLE IF NOT EXISTS agent_runs (
     id             TEXT PRIMARY KEY,
     book_id        INTEGER NOT NULL REFERENCES books(id),
@@ -199,6 +264,37 @@ def _table_ddl(table: str):
     return m.group(0) if m else None
 
 
+# ── 不可用旧表的丢弃 ────────────────────────────
+# concept_occurrences 指向物理段落坐标系（paragraphs.id），而 L3 / agent_notes / 前端高亮
+# 全部用逻辑切分坐标（chapter_idx + paragraph_index + fingerprint）。实测两套切分对不上：
+# 抽一章 38 个逻辑段，能在物理表逐字找到的只有 1 段。所以这张表不能用，直接丢
+# （它从未写入过任何数据）。重建后的表见 SCHEMA_SQL 里的 concept_occurrence。
+_DROPPED_TABLES = ("concept_occurrences",)
+
+
+def _drop_unusable_tables(conn: sqlite3.Connection) -> None:
+    for table in _DROPPED_TABLES:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+        if not exists:
+            continue
+        conn.execute(f"DROP TABLE {table}")
+        conn.commit()
+        print(f"[schema] 丢弃不可用的旧表：{table}（坐标系与逻辑段落不一致）")
+
+
+def _ensure_columns(conn: sqlite3.Connection) -> None:
+    """给已存在的表补上后加的列（SQLite 不支持加列时带约束，这里只需可空列）。"""
+    wanted = {("concept_sense", "aliases_json", "TEXT")}
+    for table, column, decl in wanted:
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+        if not cols or column in cols:
+            continue
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        conn.commit()
+        print(f"[schema] 补列：{table}.{column}")
+
+
 def _migrate_layer_tables(conn: sqlite3.Connection) -> None:
     for table, markers in _LEGACY_LAYER.items():
         old_cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
@@ -256,6 +352,8 @@ def get_db(db_path: str) -> sqlite3.Connection:
             conn.row_factory = sqlite3.Row
             conn.executescript(SCHEMA_SQL)
             _migrate_layer_tables(conn)   # 旧骨架库（层表字段不同）按当前定义重建
+            _drop_unusable_tables(conn)   # 坐标系不对的旧表（concept_occurrences）
+            _ensure_columns(conn)         # 后加的列（concept_sense.aliases_json）
             conn.commit()
             _connections[key] = conn
         return _connections[key]
