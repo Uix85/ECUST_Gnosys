@@ -76,6 +76,20 @@ EventWriter = Callable[[str, str, "dict | None"], Awaitable[None]]
 
 
 @dataclass
+class LoopBudgetSpec:
+    """任务级预算声明。AgentTask 未收到显式 LoopBudget 时用它构造。
+
+    段落链路由 run_service 持有一份跨阶段的共享预算，不走这里；
+    概念层（L4）的 map / locate 两阶段各有自己的额度，由 TaskSpec 声明。
+    """
+
+    max_requests: int = 12  # 模型请求次数上限
+    max_tool_calls: int = 20  # 工具调用次数上限
+    timeout_seconds: float = 300.0  # 整任务时限
+    request_limit: int | None = None  # 本阶段的请求上限（多阶段共享同一份预算时用）
+
+
+@dataclass
 class ToolSpec:
     """一个可以被模型调用的工具。"""
 
@@ -119,6 +133,7 @@ class TaskSpec:
     skills: list[SkillSpec] = field(default_factory=list)  # 按需加载的技能包
     allowed_skills: list[str] = field(default_factory=list)
     request_limit: int | None = None  # 本阶段上限；整个段落仍共用 LoopBudget
+    budget: LoopBudgetSpec | None = None  # 任务级预算声明；缺省则用外部传入的 LoopBudget
 
     def skill(self, name: str) -> SkillSpec:
         for s in self.skills:
@@ -300,7 +315,7 @@ class AgentTask:
         model: Any,
         event: EventWriter,
         cancelled: asyncio.Event,
-        budget: LoopBudget,
+        budget: LoopBudget | None = None,
         session: SQLiteSession | None = None,
         mounted_tools: list[ToolSpec] | None = None,
         config: Any = None,
@@ -309,7 +324,21 @@ class AgentTask:
         self.model = model
         self.event = event
         self.cancelled = cancelled
-        self.budget = budget
+        # 外部传入的共享预算优先；否则按 TaskSpec.budget → config → engine 默认值构造
+        if budget is not None:
+            self.budget = budget
+        elif spec.budget is not None:
+            self.budget = LoopBudget(
+                spec.budget.max_requests,
+                spec.budget.max_tool_calls,
+                time.monotonic() + spec.budget.timeout_seconds,
+            )
+        else:
+            self.budget = LoopBudget(
+                getattr(config, "max_requests", 12),
+                getattr(config, "max_tool_calls", 20),
+                time.monotonic() + getattr(config, "run_timeout", 300.0),
+            )
         self.session = session
         self.mounted_tools = mounted_tools
         self.config = config
@@ -401,8 +430,11 @@ class AgentTask:
         if self.model is None:
             raise ValueError("Agents SDK 需要传入 model")
         max_turns = self.budget.max_requests - self.budget.requests
-        if self.spec.request_limit is not None:
-            max_turns = min(max_turns, self.spec.request_limit)
+        limit = self.spec.request_limit
+        if limit is None and self.spec.budget is not None:
+            limit = self.spec.budget.request_limit
+        if limit is not None:
+            max_turns = min(max_turns, limit)
         if max_turns <= 0:
             raise BudgetExceeded("模型请求次数已达上限")
 
