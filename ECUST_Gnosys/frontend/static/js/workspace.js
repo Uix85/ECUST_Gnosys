@@ -72,11 +72,11 @@ async function goto(ci, pi = 0, updateHistory = true) {
     state.chapter = ci; state.paragraphs = data.paragraphs;
     $('chapter-title').textContent = data.title; $('chapter-counter').textContent = (ci + 1) + ' / ' + data.total + ' 章';
     $('previous').disabled = ci === 0; $('next').disabled = ci + 1 === data.total;
-    const fragment = document.createDocumentFragment();
+    const fragment = document.createDocumentFragment(), titleKey = data.title.replace(/\s+/g, '');
     data.paragraphs.forEach(p => {
         const row = el('section', 'paragraph-row'), source = el('div', 'source');
         source.dataset.pi = p.paragraph_index; source.id = 'paragraph-' + p.paragraph_index; source.tabIndex = -1;
-        if (p.paragraph_index === 0 && /^h[1-6]$/.test(p.tag) && p.text.trim() === data.title.trim()) row.classList.add('chapter-heading-row');
+        if (p.paragraph_index === 0 && p.text.replace(/\s+/g, '') === titleKey) row.classList.add('chapter-heading-row');
         const tag = /^h[1-6]$/.test(p.tag) ? p.tag : p.tag === 'blockquote' ? 'blockquote' : 'p';
         const inner = el(tag); inner.innerHTML = DOMPurify.sanitize(p.html); source.append(inner);
         source.querySelectorAll('img').forEach(image => { const src = image.getAttribute('src'); if (src && !/^(https?:|\/)/i.test(src)) image.src = '/read/' + book + '/' + src; });

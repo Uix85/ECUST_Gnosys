@@ -22,14 +22,23 @@
   <div id="nav-resize" class="resize-handle" role="separator" aria-orientation="vertical" aria-label="调整目录宽度" aria-controls="navigation" title="拖动调整目录宽度；拖到最窄处自动收起" tabindex="0"></div>
  </aside>
  <main id="reading" class="reading" aria-label="阅读正文">
-  <div class="reading-toolbar">
-   <div><button id="previous" aria-label="上一章">←</button><button id="next" aria-label="下一章">→</button><button id="add-bookmark">添加书签</button></div>
-   <div class="reading-settings"><label>字号 <select id="font-size"><option>16</option><option selected>18</option><option>20</option><option>22</option><option>24</option></select></label><label>行距 <select id="line-height"><option>1.6</option><option selected>1.9</option><option>2.2</option></select></label></div>
-  </div>
+  <header class="reading-header">
+   <div class="reading-heading">
+    <div class="eyebrow">READ &amp; UNDERSTAND</div>
+    <h1 id="chapter-title">{{ chapter_title }}</h1>
+   </div>
+   <div class="reading-controls">
+    <div class="reading-toolbar">
+     <div><button id="previous" aria-label="上一章">←</button><button id="next" aria-label="下一章">→</button><button id="add-bookmark">添加书签</button></div>
+     <div class="reading-settings"><label>字号 <select id="font-size"><option>16</option><option selected>18</option><option>20</option><option>22</option><option>24</option></select></label><label>行距 <select id="line-height"><option>1.6</option><option selected>1.9</option><option>2.2</option></select></label></div>
+    </div>
+    <div class="chapter-actions"><button id="open-chapter-note">章节笔记</button><button id="generate-semantic">生成本章语义解释</button><label class="muted"><input type="checkbox" id="show-semantic" checked> 段落旁注</label></div>
+   </div>
+  </header>
   <div id="reader-scroll" tabindex="0">
-   <article id="chapter-view"><div class="eyebrow">READ & UNDERSTAND</div><h1 id="chapter-title">{{ chapter_title }}</h1>
-   <div class="chapter-actions"><button id="open-chapter-note">章节笔记</button><button id="generate-semantic">生成本章语义解释</button><label class="muted"><input type="checkbox" id="show-semantic" checked> 段落旁注</label></div>
-   <div id="chapter-content" aria-busy="true"><p class="muted">正在载入正文…</p></div><div class="chapter-end">本章结束</div></article>
+   <article id="chapter-view">
+    <div id="chapter-content" aria-busy="true"><p class="muted">正在载入正文…</p></div><div class="chapter-end">本章结束</div>
+   </article>
   </div>
  </main>
  <aside id="inspector" class="inspector" aria-label="Agent 与阅读笔记">
