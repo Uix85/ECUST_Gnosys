@@ -100,12 +100,20 @@ def note_key(layer, target):
     raise HTTPException(422, '未知层级')
 
 
+def _chapter_count(book_id):
+    """章数：有定位表就直接问它（L3 逐条校验时不用重跑渲染管线切章）。"""
+    from reader import locator
+    if locator.has_locator(book_id):
+        return locator.chapter_count(book_id)
+    return len(chapters(book_id))
+
+
 def validate_target(book_id, layer, target):
     if not isinstance(target, dict):
         raise HTTPException(422, 'target 必须是对象')
     if layer in ('L2', 'L3', 'L4'):
         ci = target.get('chapter_idx')
-        if type(ci) is not int or ci < 0 or ci >= len(chapters(book_id)):
+        if type(ci) is not int or ci < 0 or ci >= _chapter_count(book_id):
             raise HTTPException(422, '章节位置无效')
     if layer in ('L3', 'L4'):
         reference(book_id, target)
@@ -183,12 +191,16 @@ async def get_outline(book_id: str):
 
 @router.get('/chapter/{chapter_idx}')
 async def get_chapter(book_id: str, chapter_idx: int):
-    from agent.book import chapter_html
+    from agent.book import chapter_html, paragraph_blocks
     chapter, paras, total = logical_paragraphs(book_id, chapter_idx)
     _, original_html, _ = chapter_html(book_id, chapter_idx)
+    # 定位表的段落只存文本；正文 HTML 与标签名从同一套切段现取，按下标对齐（切段口径是同一个函数）
+    blocks = paragraph_blocks(original_html)
     notes = {p['paragraph_index']: p for p in list_paragraph_notes(book_id, chapter_idx)}
-    for p in paras:
-        p['html'] = str(clean_html_content(BeautifulSoup(p['html'], 'html.parser')))
+    for i, p in enumerate(paras):
+        block = blocks[i] if i < len(blocks) else {}
+        p['html'] = str(clean_html_content(BeautifulSoup(p.get('html') or block.get('html', ''), 'html.parser')))
+        p['tag'] = p.get('tag') or block.get('tag', 'p')
         p['note'] = notes.get(p['paragraph_index'])
         manual = book_db(book_id).execute('SELECT content,model FROM workspace_notes WHERE key=?', (f"L3:{chapter_idx}:{p['paragraph_index']}",)).fetchone()
         if manual and manual['model'] == 'manual':
@@ -265,16 +277,28 @@ async def list_notes(book_id: str):
     db = book_db(book_id)
     items = [dict(row, target=json.loads(row['target_json'])) for row in db.execute('SELECT * FROM workspace_notes ORDER BY updated_at DESC')]
     keys = {n['key'] for n in items}
-    targets = [('L1', {})] + [('L2', {'chapter_idx': ci}) for ci in range(len(chapters(book_id)))]
-    for ci in range(len(chapters(book_id))):
+
+    def push(note):
+        if note['key'] not in keys and note['content']:
+            keys.add(note['key'])
+            items.append(note)
+
+    chapter_list = chapters(book_id)
+    for layer, target in [('L1', {})] + [('L2', {'chapter_idx': ci}) for ci in range(len(chapter_list))]:
+        push(get_note(book_id, layer, target))
+    # L3 直接从已读出的段落笔记拼条目：逐条 get_note 会把每章的段落笔记重扫一遍（1425 条 × 每章 0.4s）
+    for ci in range(len(chapter_list)):
         for p in list_paragraph_notes(book_id, ci):
-            targets.append(('L3', {'chapter_idx': ci, 'paragraph_index': p['paragraph_index'], 'fingerprint': p['fingerprint']}))
-    for layer, target in targets:
-        key = note_key(layer, target)
-        if key not in keys:
-            note = get_note(book_id, layer, target)
-            if note['content']:
-                items.append(note)
+            target = {'chapter_idx': ci, 'paragraph_index': p['paragraph_index'],
+                      'fingerprint': p['fingerprint']}
+            key = note_key('L3', target)
+            if key in keys:
+                continue
+            keys.add(key)
+            items.append({'key': key, 'layer': 'L3', 'target': target,
+                          'content': p['detail'] or p['short'], 'revision': 0,
+                          'legacy_version': fingerprint(dumps(p)), 'updated_at': '',
+                          'model': 'legacy'})
     return {'items': items}
 
 

@@ -94,6 +94,20 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         await self.client.delete(self.base+'/bookmarks/'+mark);self.assertFalse((await self.client.get(self.base+'/bookmarks')).json()['items'])
         r=await self.client.get(self.base+'/chapter/0');self.assertEqual(r.status_code,200);self.assertEqual(r.json()['paragraphs'][3]['text'],SOURCE)
 
+    async def test_locator_mode_keeps_reader_payload(self):
+        """建了定位表之后，/chapter 必须仍给前端 html+tag（定位表只存文本）。"""
+        from reader import locator
+        before=(await self.client.get(self.base+'/chapter/0')).json()['paragraphs']
+        locator.build(self.book,apply=True)
+        self.assertTrue(locator.has_locator(self.book))
+        r=await self.client.get(self.base+'/chapter/0');self.assertEqual(r.status_code,200,r.text)
+        after=r.json()['paragraphs']
+        self.assertEqual([p['text'] for p in after],[p['text'] for p in before])   # 切段不变
+        self.assertTrue(all(p['html'].strip() and p['tag'] for p in after))
+        self.assertTrue(all(p['html'] for p in before))
+        self.assertTrue((await self.client.get(self.base+'/outline')).json()['items'])
+        self.assertEqual((await self.client.get(self.base+'/notes')).status_code,200)
+
     async def test_notes_conflict_and_legacy(self):
         db=book_db(self.book);db.execute("INSERT INTO book_layer(book_id,content) VALUES(1,'旧笔记')");db.commit()
         old=(await self.client.post(self.base+'/note/read',json={'layer':'L1'})).json();self.assertEqual(old['content'],'旧笔记')
