@@ -1,6 +1,6 @@
 # ECUST Gnosys
 
-一个本地运行的 EPUB/TXT 阅读工作台。目录、全文搜索、书签、四层 Markdown 笔记、Agent 对话和原文引用共用书内坐标；对话支持多层 `@章节` 补全、划线引用和流式 Markdown 渲染。书籍与阅读记录保存在本机，网页服务默认监听 `127.0.0.1:8123`。
+一个本地运行的 EPUB/TXT 阅读工作台。目录、全文搜索、书签、四层 Markdown 笔记、Agent 对话和原文引用共用书内坐标；对话支持多层 `@章节` 补全、划线引用和流式 Markdown 渲染。页码/段落坐标由入库时建好的**定位表**（`book_nodes` / `book_paragraphs`）统一供给。书籍与阅读记录保存在本机，网页服务默认监听 `127.0.0.1:8123`。
 
 ## 快速开始
 
@@ -20,6 +20,15 @@ uv run backend/reader/import_epub.py "/path/to/book.epub"
 导入的书籍保存在 `books/<书名>_data/`，每本书的数据位于该目录的 `book.db`。导入时会从正文的
 `<h1>`-`<h6>` 抽出章节层级写入 `chapters.heading_json`；txt 源没有标题标签，由
 `backend/agent/outline.py` 的文本行模式兜底推断。
+
+入库后建议建一次定位表（章 → 标题区 → 段，见 [定位系统设计](docs/定位系统_设计_v1.md)）：
+
+```bash
+uv run python tools/platform/build_locator.py --book <书名>_data --apply
+uv run python tools/platform/check_locator.py     # 与现解逐字一致 / 幂等 / 标题质量
+```
+
+定位表是 L2 章节层、L3 语义层、L4 概念层的共同地基；没建定位的老书会自动回退到渲染管线现解，不会报错。
 
 ### 离线验收
 
@@ -48,11 +57,23 @@ ego-browser nodejs < tests/browser_e2e.mjs
 ```bash
 uv run python backend/agent/outline.py            # L3 结构层纯函数自检
 uv run python backend/agent/selection.py          # L4 划词拦截自检
+uv run python backend/reader/locator.py           # 定位层纯函数自检（标题树与段落归属）
+uv run python tests/test_chapter_layer.py         # L2 章节层单测（validator / 渲染 / 定位树）
 uv run python tools/structure/check_outline.py    # L3 层级识别与窗口统计
+uv run python tools/platform/check_locator.py     # 定位层自检（与现解逐字一致、幂等、标题质量）
+uv run python tools/structure/check_chapter_flow.py   # L2 章节层无模型自检（材料→校验→渲染→TaskSpec）
 uv run python tools/concept/check_concept_flow.py # L4 概念层端到端（拦截→材料→工具→校验→TaskSpec）
 uv run python tools/semantic/check_semantic_para.py   # 语义层数据对账（分句口径）
 uv run python tools/platform/check_chapter_units.py   # 章单位对齐自检
 uv run python tools/concept/build_term_index.py       # L0 术语提名与索引落库
+```
+
+定位层与章节层需要一个真模型（或用 `--model` 指定）：
+
+```bash
+uv run python tools/platform/build_locator.py --apply        # 建/重建定位表（章→标题区→段）
+uv run python tools/structure/run_chapter_layer.py --book <书> --chapter 2            # 只看产出
+uv run python tools/structure/run_chapter_layer.py --book <书> --chapter 2 --apply    # 写库（先导出旧稿）
 ```
 
 ## AI 配置
@@ -87,8 +108,10 @@ AGENT_API_KEY=你的_API_密钥
 
 | 层 | 模块 | 状态 |
 | --- | --- | --- |
+| 定位层（地基） | `reader/locator.py`，入口 `tools/platform/build_locator.py` | 入库产物：`book_nodes` 标题树 + `book_paragraphs` 段落真相；`logical_paragraphs`／`locate()` 优先读表，老书回退现解 |
 | L1 全书层 | `layer_runs.py` | 按段落分块覆盖全书，再归纳章节关系；保存覆盖进度和证据 |
-| L2 章节层 | `layer_runs.py` + `outline.py` | 归纳章级总纲、论证区块、关键转折和承接关系 |
+| L2 章节层 | `chapter.py`，入口 `tools/structure/run_chapter_layer.py` | 沿定位树的节点逐个判断（作用/重点/论证/去向），结构化 `blocks_json` 落库并渲染 Markdown；未过线不入库 |
+| L2 章节层（旧路径） | `layer_runs.py` + `outline.py` | 归纳章级总纲、论证区块、关键转折和承接关系 |
 | L3 语义层（段落解释） | `tasks.py` + `tools.py` + `run_service.py` | 阅读页可触发段落、详细及逐句解释；使用章节结构和自适应上下文 |
 | L0 术语索引（录入期提名） | `index.py`，入口 `tools/concept/build_term_index.py` | 零模型统计，手动跑 |
 | L4 概念层（划词 → 意义地图/定位） | `selection.py` + `concept_tools.py` + `concept.py` + `layer_runs.py` | 阅读页可触发；保存术语地图、位置解释及带指纹的原文证据 |
@@ -114,12 +137,14 @@ backend/
     selection.py                  L4 输入拦截（划词 → 规范词条与位置）
     concept_tools.py              L4 概念层技能与工具
     concept.py                    L4 任务定义（建图 / 定位）
-    outline.py                    L3 章-节-子节层级与自适应上下文窗口
+    chapter.py                    L2 章节层任务定义（材料组装 / 判定标准 / validator / 渲染 / 落库）
+    outline.py                    L3 章-节-子节层级与自适应上下文窗口（优先读定位表）
     run_api.py                    Agent HTTP 接口
     skills/book-reading/          阅读 Agent 使用的 Skill
     skills/concept-mapping/       L4 建图技能规程
     skills/concept-reading/       L4 定位技能规程
   reader/                         EPUB 导入、阅读服务、章节处理和数据模型
+    locator.py                    定位层：章→标题区→段的唯一真相（book_nodes / book_paragraphs）
   db/schema.py                    SQLite 表结构和连接管理
 tools/                            开发期自检脚本（零模型，随时可跑）
   agent/check_agent_endpoint.py   端点与 tool calling 连通性
@@ -127,17 +152,23 @@ tools/                            开发期自检脚本（零模型，随时可�
   concept/check_concept_flow.py   L4 概念层无模型端到端验证
   concept/clean_concept_placeholder.py  清理占位污染词条
   platform/check_chapter_units.py 章单位对齐自检
+  platform/build_locator.py      定位表构建（--apply 写入）
+  platform/check_locator.py      定位层自检（逐字一致 / 幂等 / 标题质量）
   platform/rebuild_chapter_paragraphs.py 章单位对齐（--apply 写入）
   platform/backfill_heading_levels.py    补齐 chapters.heading_json
   semantic/check_semantic_para.py 语义层数据对账
   semantic/run_batch.py           真模型批量跑（自动备份还原 book.db）
   structure/check_outline.py      L3 结构层自检
+  structure/check_chapter_flow.py L2 章节层无模型自检
+  structure/run_chapter_layer.py L2 真模型跑一章（--apply 写库）
 frontend/
   templates/                      阅读器网页模板
   static/                          浏览器静态资源
 books/                             本地导入的书籍及其数据库
 docs/                              项目规范、研究材料和章节文档
   reading_semantics.md            术语规范（译名卡 / 前提追溯库，供 read_glossary）
+  定位系统_设计_v1.md             定位层设计（四层的地基：一条主坐标 + 一份结构事实）
+  章节层_设计_v1.md               L2 章节层设计（材料/判定标准/合格线/验收）
   概念层_设计_v1.md               L4 概念层设计与实施现状
 ```
 

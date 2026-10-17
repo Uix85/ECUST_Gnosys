@@ -352,10 +352,11 @@ class AgentTask:
             try:
                 args = json.loads(raw_args or "{}")
             except json.JSONDecodeError as exc:
-                return json.dumps(
-                    {"ok": False, "error": f"参数不是合法 JSON：{exc}"},
-                    ensure_ascii=False,
-                )
+                # 参数被截断/写坏时要**留痕**：否则模型收到的错误在事件流里看不见，
+                # 排查时会误以为是工具没被调用（本项目真踩过这个坑）。
+                msg = f"参数不是合法 JSON（{len(raw_args or '')} 字符）：{exc}"
+                await self.event("tool_error", msg[:200], {"error": msg[:200]})
+                return json.dumps({"ok": False, "error": msg}, ensure_ascii=False)
             return _as_text(await (handler or spec.handler)(args))
 
         return FunctionTool(
@@ -373,12 +374,24 @@ class AgentTask:
             message = str(exc)
             await self.event("tool_error", f"提交被退回：{message[:200]}", {"error": message[:200]})
             return {"ok": False, "error": message}
+        except Exception as exc:            # 形状/内部错误也退回，别让整轮白跑
+            msg = f"提交的形状不对（{type(exc).__name__}）：{str(exc)[:160]}"
+            await self.event("tool_error", msg, {"error": msg})
+            return {"ok": False, "error": msg}
+        await self.event(
+            "tool_ok",
+            "提交通过校验",
+            {"keys": sorted(self.submitted) if isinstance(self.submitted, dict) else None},
+        )
         return {"ok": True}
 
     async def _load_skill(self, args: dict) -> dict:
-        name = args.get("name")
+        name = (args.get("name") or "").strip()
         if name not in self.spec.allowed_skills:
-            raise ValueError("该技能不在本任务允许列表中")
+            allowed = "/".join(self.spec.allowed_skills) or "无"
+            raise ValueError(
+                f"该技能不在本任务允许列表中：{name!r}（本任务可用：{allowed}）"
+            )
         skill = self.spec.skill(name)
         existing = {tool.name for tool in self.agent.tools}
         mounted = [self._make_tool(tool) for tool in skill.tools if tool.name not in existing]
@@ -401,7 +414,8 @@ class AgentTask:
             self._make_tool(
                 ToolSpec(
                     "load_skill",
-                    "读取一个允许使用的技能规程，并启用该技能提供的工具。",
+                    "读取一个允许使用的技能规程，并启用该技能提供的工具。"
+                    f"本任务可用技能：{'/'.join(self.spec.allowed_skills) or '无'}。",
                     {"name": {"type": "string", "description": "技能名"}},
                     self._load_skill,
                     ["name"],

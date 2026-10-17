@@ -93,11 +93,15 @@ def chapter_html(book_id: str, chapter_idx: int):
     return chapter, html, len(chapters)
 
 
-def logical_paragraphs(book_id: str, chapter_idx: int) -> tuple[dict, list[dict], int]:
-    chapter, html, total = chapter_html(book_id, chapter_idx)
+def paragraph_blocks(html: str) -> list[dict]:
+    """HTML → 段落块 `{text, html, tag}`。
+
+    定位层的构建与“现解回退”**必须**共用这一个实现，否则两边会分叉。
+    规则：最内层块级标签为一块；块内 <br> 再切（epub 与 txt 转换器都用 <br> 断行）。
+    """
     soup = BeautifulSoup(html, "html.parser")
     blocks = [tag for tag in soup.find_all(BLOCK_TAGS) if not tag.find(BLOCK_TAGS)]
-    paragraphs = []
+    out: list[dict] = []
     for block in blocks:
         nodes = []
 
@@ -109,8 +113,8 @@ def logical_paragraphs(book_id: str, chapter_idx: int) -> tuple[dict, list[dict]
                 for node in nodes
             )
             if normalize_text(text):
-                paragraphs.append({"paragraph_index": len(paragraphs), "text": text,
-                                   "html": "".join(str(node) for node in nodes), "tag": block.name})
+                out.append({"text": text, "html": "".join(str(node) for node in nodes),
+                            "tag": block.name})
             nodes.clear()
 
         for node in block.children:
@@ -119,6 +123,40 @@ def logical_paragraphs(book_id: str, chapter_idx: int) -> tuple[dict, list[dict]
             else:
                 nodes.append(node)
         flush()
+    return out
+
+
+def split_paragraphs(html: str) -> list[str]:
+    """HTML → 段落文本列表（定位层用；与 paragraph_blocks 同一实现）。"""
+    return [block["text"] for block in paragraph_blocks(html)]
+
+
+def logical_paragraphs(book_id: str, chapter_idx: int) -> tuple[dict, list[dict], int]:
+    """某章的段落（逻辑坐标）。**优先读定位表**，没建过定位的书回退现解 HTML。
+
+    定位表是入库产物（见 backend/reader/locator.py）：读表拿到的是冻结过的段落与段序，
+    不再依赖渲染管线（旧路径：chapter_html → _get_chapter_slice → 统一 HTML）。
+    """
+    from reader import locator
+    if locator.has_locator(book_id):
+        nodes = locator.load_nodes(book_id)
+        chapter_node = next((n for n in nodes if n["kind"] == "chapter"
+                             and n["chapter_idx"] == chapter_idx), None)
+        if chapter_node is None:
+            raise HTTPException(status_code=404, detail="Chapter not found")
+        rows = locator.load_paragraphs(book_id, chapter_idx) or []
+        paragraphs = [{"paragraph_index": r["para_idx"], "text": r["text"],
+                       "fingerprint": r["fingerprint"], "node_idx": r["node_idx"],
+                       "seg_in_node": r["seg_in_node"]} for r in rows]
+        chapter = {"chapter_idx": chapter_idx, "title": chapter_node["title"],
+                   "node_idx": chapter_node["node_idx"],
+                   "n_paragraphs": len(paragraphs)}
+        return chapter, paragraphs, locator.chapter_count(book_id)
+
+    # ── 回退：没建定位的书（或刚上传还没建）按渲染管线现解 ──
+    chapter, html, total = chapter_html(book_id, chapter_idx)
+    paragraphs = [{"paragraph_index": i, **block}
+                  for i, block in enumerate(paragraph_blocks(html))]
     for para in paragraphs:
         para["fingerprint"] = fingerprint(para["text"])
     return chapter, paragraphs, total
@@ -141,6 +179,23 @@ def get_paragraph(book_id: str, chapter_idx: int, paragraph_index: int) -> dict:
         else ""
     )
     return result
+
+
+def locate(book_id: str, chapter_idx: int, para_index: int) -> dict:
+    """段地址 → 完整位置（含所属节点与祖先路径）。定位表缺失时退回现解。"""
+    from reader import locator
+    if locator.has_locator(book_id):
+        return locator.locate(book_id, chapter_idx, para_index)
+    item = get_paragraph(book_id, chapter_idx, para_index)
+    return {"chapter_idx": chapter_idx, "para_index": para_index, "text": item["text"],
+            "fingerprint": item["fingerprint"], "char_count": len(item["text"]),
+            "node": None, "node_path": [], "seg_in_node": para_index}
+
+
+def find_by_fingerprint(book_id: str, fp: str) -> list[dict]:
+    """指纹 → 位置列表（内容反查位置；同一段文字可能多处出现，故为列表）。"""
+    from reader import locator
+    return locator.find_by_fingerprint(book_id, fp) if locator.has_locator(book_id) else []
 
 
 def semantic_needed(text: str) -> bool:

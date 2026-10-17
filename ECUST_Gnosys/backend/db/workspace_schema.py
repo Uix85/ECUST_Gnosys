@@ -30,8 +30,11 @@ def backup_before_upgrade(conn, path):
         if not os.path.exists(backup_path):
             partial = backup_path + '.tmp'
             try:
-                with sqlite3.connect(partial) as target:
+                target = sqlite3.connect(partial)
+                try:
                     conn.backup(target)
+                finally:
+                    target.close()      # Windows：不关连接就无法 rename（WinError 32）
                 os.replace(partial, backup_path)
             finally:
                 if os.path.exists(partial):

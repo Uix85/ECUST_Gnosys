@@ -327,10 +327,9 @@ async def list_para_semantic(book_id: str, chapter: int = -1):
         from agent.book import list_paragraph_notes
         return {"items": list_paragraph_notes(book_id, chapter)}
     from agent.book import list_paragraph_notes
-    from reader.book_service import load_book_cached, _get_toc_pages, _build_chapters
-    book = load_book_cached(book_id)
-    if book:
-        chapter_count = len(_build_chapters(_get_toc_pages(book_id, book)))
+    from reader import locator
+    chapter_count = locator.chapter_count(book_id) if locator.has_locator(book_id) else 0
+    if chapter_count:
         merged = []
         for chapter_idx in range(chapter_count):
             merged.extend(list_paragraph_notes(book_id, chapter_idx))

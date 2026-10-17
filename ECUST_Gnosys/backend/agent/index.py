@@ -258,6 +258,9 @@ def nominate(book_id: str, max_n: int = NGRAM_MAX) -> list[dict]:
 
 
 def _chapter_count(book_id: str) -> int:
+    from reader import locator
+    if locator.has_locator(book_id):
+        return locator.chapter_count(book_id)
     n = 0
     while True:
         try:

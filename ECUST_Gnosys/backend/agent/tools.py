@@ -22,9 +22,16 @@ def _tool(
 def _chapter_layer_row(db, book_int_id: int, chapter_idx: int, book_id: str):
     """取某逻辑章的 chapter_layer。
 
-    注意：chapter_layer 是按 chapters.spine_order 存的，而逻辑章索引是阅读器切章的结果，
-    两者可能错位 —— 所以用该章的 start_page 反查 spine_order（沿用原 read_notes 的做法）。
+    优先按 chapter_idx 直取（L2 现在按逻辑章存，chapter_id 可能为 NULL）；
+    旧数据没有 chapter_idx 时才回退到 spine_order 映射（渲染切章与逻辑章可能错位）。
     """
+    row = db.execute(
+        "SELECT content, model_version, updated_at FROM chapter_layer "
+        "WHERE book_id=? AND chapter_idx=?",
+        (book_int_id, chapter_idx),
+    ).fetchone()
+    if row:
+        return row
     try:
         from reader.book_service import load_book_cached, _get_toc_pages, _build_chapters
 

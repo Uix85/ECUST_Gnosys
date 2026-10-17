@@ -62,6 +62,44 @@ CREATE TABLE IF NOT EXISTS paragraphs (
 CREATE INDEX IF NOT EXISTS idx_paras_chapter ON paragraphs(chapter_id, seq);
 CREATE INDEX IF NOT EXISTS idx_paras_book    ON paragraphs(book_id);
 
+-- 3b. book_nodes（定位层·标题树：章与节/子节都是它，章就是一级标题）
+--    node_idx 全书文档序；chapter_idx 仅 kind='chapter' 的节点计数（对外唯一章坐标）
+CREATE TABLE IF NOT EXISTS book_nodes (
+    book_id       INTEGER NOT NULL,
+    node_idx      INTEGER NOT NULL,   -- 全书节点序（文档序）
+    kind          TEXT    NOT NULL,   -- chapter / section
+    level         INTEGER NOT NULL,   -- 相对深度：章=0
+    parent_idx    INTEGER,            -- 父节点；章节点为 NULL
+    chapter_idx   INTEGER NOT NULL,   -- 所属章的逻辑索引
+    title         TEXT    NOT NULL,
+    title_fp      TEXT,               -- 标题指纹（稳定身份）
+    head_para     INTEGER,            -- 标题行所在段落；NULL = 原文未标（合成节点）
+    para_from     INTEGER NOT NULL,   -- 该节点覆盖的段落区间（含子树）
+    para_to       INTEGER NOT NULL,
+    n_paragraphs  INTEGER NOT NULL,
+    synthetic     INTEGER NOT NULL DEFAULT 0,  -- 1 = 章节点由章标题合成（原文未标）
+    built_at      TEXT,
+    PRIMARY KEY (book_id, node_idx)
+);
+CREATE INDEX IF NOT EXISTS idx_nodes_chapter ON book_nodes(book_id, chapter_idx, level);
+
+-- 3c. book_paragraphs（定位层·唯一段落真相）
+--    node_idx = 就近的标题祖先（"所属区"）；章首无标题的段落 node_idx 就是章节点
+CREATE TABLE IF NOT EXISTS book_paragraphs (
+    book_id     INTEGER NOT NULL,
+    chapter_idx INTEGER NOT NULL,
+    para_idx    INTEGER NOT NULL,
+    node_idx    INTEGER NOT NULL,
+    seg_in_node INTEGER NOT NULL,   -- 在所属节点内第几段（含标题行为 0）
+    text        TEXT    NOT NULL,
+    fingerprint TEXT    NOT NULL,
+    char_count  INTEGER NOT NULL,
+    built_at    TEXT,
+    PRIMARY KEY (book_id, chapter_idx, para_idx)
+);
+CREATE INDEX IF NOT EXISTS idx_bp_fp ON book_paragraphs(book_id, fingerprint);
+CREATE INDEX IF NOT EXISTS idx_bp_node ON book_paragraphs(book_id, node_idx);
+
 -- 4. book_layer (L1 全书层·键=book_id)
 CREATE TABLE IF NOT EXISTS book_layer (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,8 +112,10 @@ CREATE TABLE IF NOT EXISTS book_layer (
 -- 5. chapter_layer (L2 章节层·键=chapter_id)
 CREATE TABLE IF NOT EXISTS chapter_layer (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    chapter_id    INTEGER NOT NULL UNIQUE REFERENCES chapters(id),
+    chapter_id    INTEGER UNIQUE REFERENCES chapters(id),   -- 内部外键（不再作存储键）
     book_id       INTEGER NOT NULL REFERENCES books(id),
+    chapter_idx   INTEGER,          -- 逻辑章索引：对外唯一章坐标
+    blocks_json   TEXT,             -- 结构化产出（单一真源，Markdown 由它渲染）
     content       TEXT,
     model_version TEXT,
     updated_at    TEXT
@@ -285,7 +325,9 @@ def _drop_unusable_tables(conn: sqlite3.Connection) -> None:
 
 def _ensure_columns(conn: sqlite3.Connection) -> None:
     """给已存在的表补上后加的列（SQLite 不支持加列时带约束，这里只需可空列）。"""
-    wanted = {("concept_sense", "aliases_json", "TEXT")}
+    wanted = {("concept_sense", "aliases_json", "TEXT"),
+              ("chapter_layer", "blocks_json", "TEXT"),      # L2 结构化产出（单一真源）
+              ("chapter_layer", "chapter_idx", "INTEGER")}    # 逻辑章索引（对外唯一章坐标）
     for table, column, decl in wanted:
         cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
         if not cols or column in cols:
