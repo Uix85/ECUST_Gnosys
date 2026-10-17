@@ -405,7 +405,7 @@ def book_reading_tools(book_id: str, ledger: dict[tuple[int, int], list[str]]) -
         ),
         _tool(
             "read_book_paragraph",
-            "读取当前书指定逻辑章节和段落，可按字符偏移续读。",
+            "精读单个段落，可按字符偏移续读。整章/整节概览请用 read_directory_node 按节点分页读取，不要逐段爬完整章。",
             {
                 "chapter_idx": {"type": "integer"},
                 "paragraph_index": {"type": "integer"},

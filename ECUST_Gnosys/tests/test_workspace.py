@@ -192,6 +192,29 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         r=await self.client.post(self.chat+f'/sessions/{sid}/messages/{mid}/retry',json={'request_id':'retry-1'});self.assertEqual(r.status_code,200,r.text);data=await self.wait_chat(sid);self.assertEqual(data['messages'][-1]['status'],'completed',data)
         self.model.fail=True;r=await self.send(sid,req='failing');self.assertEqual(r.status_code,200);data=await self.wait_chat(sid);self.assertEqual(data['messages'][-1]['status'],'failed',data)
 
+    async def test_chat_tool_budget_exhaustion_still_answers(self):
+        from agent.config import AgentConfig
+        cfg = AgentConfig(base_url='http://offline', model='fake', api_key='offline-test-key',
+                          request_timeout=5, max_requests=8, max_tool_calls=0,
+                          run_timeout=30, max_parallel=1)
+        sid = (await self.client.post(self.chat + '/sessions', json={})).json()['id']
+        with patch('agent.chat.load_config', return_value=cfg):
+            r = await self.send(sid, req='budget-0')
+            self.assertEqual(r.status_code, 200, r.text)
+            mid = r.json()['message_id']
+            for _ in range(500):
+                data = (await self.client.get(self.chat + '/sessions/' + sid)).json()
+                msg = next(x for x in data['messages'] if x['id'] == mid)
+                if msg['status'] not in ('queued', 'running'):
+                    break
+                await asyncio.sleep(.01)
+            else:
+                self.fail('chat timeout')
+        self.assertEqual(msg['status'], 'completed', data)
+        self.assertIn('阅读分析', msg['content'])
+        events = (await self.client.get(self.chat + f'/sessions/{sid}/messages/{mid}/events')).text
+        self.assertIn('工具预算已用完', events)
+
     async def test_restart_recovery_and_source_validation(self):
         db=book_db(self.book)
         sid=(await self.client.post(self.chat+'/sessions',json={})).json()['id']
