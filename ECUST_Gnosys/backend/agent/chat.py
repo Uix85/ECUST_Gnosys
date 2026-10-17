@@ -124,7 +124,8 @@ async def rename_session(book_id: str, session_id: str, body: dict = Body(...)):
 @router.get('/sessions/{session_id}')
 async def get_session(book_id: str, session_id: str):
     db = book_db(book_id)
-    return {**session_record(db, session_id), 'messages': [message_item(book_id, r) for r in db.execute('SELECT * FROM chat_messages WHERE session_id=? ORDER BY created_at,id', (session_id,))]}
+    # 同一轮的用户/助手消息可能落在同一微秒；rowid 保证按插入顺序（用户在前）稳定输出。
+    return {**session_record(db, session_id), 'messages': [message_item(book_id, r) for r in db.execute('SELECT * FROM chat_messages WHERE session_id=? ORDER BY created_at,rowid', (session_id,))]}
 
 
 @router.delete('/sessions/{session_id}')

@@ -172,6 +172,7 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         r=await self.send(sid,refs=refs);self.assertEqual(r.status_code,200,r.text);mid=r.json()['message_id']
         duplicate=await self.send(sid,refs=refs);self.assertEqual(duplicate.json()['message_id'],mid)
         data=await self.wait_chat(sid);self.assertEqual(data['messages'][-1]['status'],'completed',data)
+        self.assertEqual([m['role'] for m in data['messages']],['user','assistant'])
         self.assertIn('公式',data['messages'][-1]['content']);self.assertTrue(data['messages'][-1]['references'])
         assistant=next(m for m in data['messages'] if m['id']==mid)
         self.assertIn('先核对章节范围',assistant['trace']['reasoning'])
@@ -185,6 +186,18 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         r=await self.client.get(self.chat+'/sessions/'+sid+'/export');self.assertIn('## Agent',r.text);self.assertIn('社会关系',r.text)
         await self.client.patch(self.chat+'/sessions/'+sid,json={'title':'新的名字'});self.assertEqual((await self.client.get(self.chat+'/sessions')).json()['items'][0]['title'],'新的名字')
         await self.client.delete(self.chat+'/sessions/'+sid);self.assertEqual((await self.client.get(self.chat+'/sessions/'+sid)).status_code,404)
+
+    async def test_chat_order_survives_identical_timestamps(self):
+        sid=(await self.client.post(self.chat+'/sessions',json={})).json()['id']
+        db=book_db(self.book);ts='2026-01-01T00:00:00.000000+00:00'
+        with db:
+            db.execute("INSERT INTO chat_messages(id,session_id,role,content,references_json,status,request_id,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                       ('zzz-user',sid,'user','问','[]','completed','r1',ts))
+            db.execute("INSERT INTO chat_messages(id,session_id,role,content,references_json,status,request_id,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                       ('aaa-assistant',sid,'assistant','答','[]','completed','r2',ts))
+        data=(await self.client.get(self.chat+'/sessions/'+sid)).json()
+        self.assertEqual([m['role'] for m in data['messages']],['user','assistant'])
+        self.assertEqual([m['id'] for m in data['messages']],['zzz-user','aaa-assistant'])
 
     async def test_chat_stop_busy_failure_retry(self):
         self.model.delay=.1
