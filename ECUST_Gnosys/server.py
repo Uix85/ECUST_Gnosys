@@ -6,11 +6,13 @@ import sys
 BACKEND_DIR = Path(__file__).resolve().parent / "backend"
 sys.path.insert(0, str(BACKEND_DIR))
 
+from api.port_cleanup import HOST, PORT, ensure_port_free  # noqa: E402
 from api.server import app  # noqa: E402
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    print("Starting server at http://127.0.0.1:8123")
-    uvicorn.run(app, host="127.0.0.1", port=8123)
+    ensure_port_free()
+    print(f"Starting server at http://{HOST}:{PORT}")
+    uvicorn.run(app, host=HOST, port=PORT)

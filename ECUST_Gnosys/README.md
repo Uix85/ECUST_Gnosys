@@ -11,7 +11,7 @@ uv sync
 uv run server.py
 ```
 
-打开 <http://127.0.0.1:8123/>。可以在书库页面上传 EPUB/TXT，也可以从命令行导入 EPUB：
+打开 <http://127.0.0.1:8123/>。启动时会检查 8123 端口；若已被占用，会结束占用该端口的进程后继续启动。可以在书库页面上传 EPUB/TXT，也可以从命令行导入 EPUB：
 
 ```bash
 uv run backend/reader/import_epub.py "/path/to/book.epub"
@@ -128,6 +128,7 @@ AGENT_API_KEY=你的_API_密钥
 server.py                         根目录启动入口
 backend/
   api/server.py                   FastAPI 应用、网页路由和服务装配
+  api/port_cleanup.py             启动前定位并结束占用 8123 的进程
   agent/
     runs.py                       批次调度、取消和清晰的段落循环
     run_service.py                单段流程、运行状态与结果持久化
