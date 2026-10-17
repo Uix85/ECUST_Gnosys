@@ -11,7 +11,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "backend"))
 
 from reader import locator  # noqa: E402
-from agent import chapter as ct  # noqa: E402
+from agent.layers import l2_chapter as ct  # noqa: E402
 
 
 def nodes_fixture():

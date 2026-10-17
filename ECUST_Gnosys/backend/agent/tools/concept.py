@@ -22,12 +22,12 @@ submit_concept_reading(needs_mapping=true) 上报，由系统触发后台建图�
 import json
 from pathlib import Path
 
-from agent.book import (book_db, fingerprint, get_paragraph, logical_paragraphs,
+from agent.tools.book import (book_db, fingerprint, get_paragraph, logical_paragraphs,
                         normalize_text, split_sentences, text_hash)
-from agent.engine import SkillSpec
-from agent.tools import _tool, book_reading_tools
+from agent.runtime.engine import SkillSpec
+from agent.tools.reading import _tool, book_reading_tools
 
-SKILLS_DIR = Path(__file__).resolve().parent / "skills"
+SKILLS_DIR = Path(__file__).resolve().parents[1] / "skills"
 
 # 作者解释某概念时的锚点词（粗筛用；按书可配，见 docs/reading_semantics.md 的两段式结构）
 DEFINITION_ANCHORS = ("意味着", "指的是", "称为", "叫做", "这就是说", "所谓",

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
+ROOT_DIR = Path(__file__).resolve().parents[3]
 ENV_FILE = ROOT_DIR / ".env"
 SECRETS_FILE = ROOT_DIR / ".env.secrets"
 
@@ -240,4 +240,4 @@ if __name__ == "__main__":                       # ponytail: 一条可运行的�
     assert {item["key"] for item in snap["items"]} == set(FIELD_BY_KEY)
     assert all("value" not in item for item in snap["items"] if item["kind"] == "secret")
     _check_writes()
-    print("agent.config 自检通过；当前模型：", snap["model"] or "(未配置)")
+    print("agent.runtime.config 自检通过；当前模型：", snap["model"] or "(未配置)")

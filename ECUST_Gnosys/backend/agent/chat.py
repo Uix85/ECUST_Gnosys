@@ -4,19 +4,22 @@ import asyncio
 import json
 import time
 import uuid
-from pathlib import Path
 
 from agents import Agent, Runner, SQLiteSession, ModelSettings, RunHooks, FunctionTool
-from fastapi import APIRouter, Body, HTTPException, Query, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi import HTTPException
 
-from agent.book import book_db, get_paragraph, logical_paragraphs
-from agent.config import load_config
-from agent.engine import build_model, LoopBudget, _run_with_cancellation, _material_refs
-from agent.tools import book_reading_tools
+from agent.tools.book import book_db, get_paragraph, logical_paragraphs
+from agent.runtime.config import load_config
+from agent.runtime.engine import (
+    SDKFunctionTools,
+    build_model,
+    LoopBudget,
+    _run_with_cancellation,
+    _material_refs,
+)
+from agent.tools.reading import book_reading_tools
 from reader.workspace import check_references, outline_nodes, dumps, now
 
-router = APIRouter(prefix='/api/chat/{book_id}', tags=['chat'])
 ACTIVE = {}
 SIGNALS = {}
 
@@ -95,59 +98,6 @@ def message_item(book_id, row):
     return item
 
 
-@router.get('/sessions')
-async def list_sessions(book_id: str):
-    return {'items': [dict(r) for r in book_db(book_id).execute('SELECT * FROM chat_sessions ORDER BY updated_at DESC')]}
-
-
-@router.post('/sessions')
-async def create_session(book_id: str, body: dict = Body(default={})):
-    ident, timestamp = uuid.uuid4().hex, now()
-    title = str(body.get('title') or '新对话').strip()[:100] or '新对话'
-    with book_db(book_id) as db:
-        db.execute('INSERT INTO chat_sessions VALUES(?,?,?,?)', (ident, title, timestamp, timestamp))
-    return {'id': ident, 'title': title}
-
-
-@router.patch('/sessions/{session_id}')
-async def rename_session(book_id: str, session_id: str, body: dict = Body(...)):
-    db = book_db(book_id)
-    session_record(db, session_id)
-    title = body.get('title')
-    if not isinstance(title, str) or not title.strip() or len(title) > 100:
-        raise HTTPException(422, '名称需要 1–100 个字符')
-    with db:
-        db.execute('UPDATE chat_sessions SET title=?,updated_at=? WHERE id=?', (title.strip(), now(), session_id))
-    return {'ok': True}
-
-
-@router.get('/sessions/{session_id}')
-async def get_session(book_id: str, session_id: str):
-    db = book_db(book_id)
-    # 同一轮的用户/助手消息可能落在同一微秒；rowid 保证按插入顺序（用户在前）稳定输出。
-    return {**session_record(db, session_id), 'messages': [message_item(book_id, r) for r in db.execute('SELECT * FROM chat_messages WHERE session_id=? ORDER BY created_at,rowid', (session_id,))]}
-
-
-@router.delete('/sessions/{session_id}')
-async def delete_session(book_id: str, session_id: str):
-    db = book_db(book_id)
-    session_record(db, session_id)
-    for key, signal in list(SIGNALS.items()):
-        if key[:2] == (book_id, session_id):
-            signal.set()
-    pending = [task for key, task in list(ACTIVE.items()) if key[:2] == (book_id, session_id)]
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
-    session = sdk_session(book_id, session_id)
-    try:
-        await session.clear_session()
-    finally:
-        session.close()
-    with db:
-        db.execute('DELETE FROM chat_sessions WHERE id=?', (session_id,))
-    return {'ok': True}
-
-
 def start_message(book_id, session_id, body, *, retry_of=None):
     db = book_db(book_id)
     session_record(db, session_id)
@@ -185,75 +135,6 @@ def start_message(book_id, session_id, body, *, retry_of=None):
     return {'message_id': answer_id, 'user_id': user_id, 'status': 'queued', 'retry_of': retry_of}
 
 
-@router.post('/sessions/{session_id}/messages')
-async def send(book_id: str, session_id: str, body: dict = Body(...)):
-    return start_message(book_id, session_id, body)
-
-
-@router.post('/sessions/{session_id}/messages/{message_id}/retry')
-async def retry(book_id: str, session_id: str, message_id: str, body: dict = Body(...)):
-    db = book_db(book_id)
-    session_record(db, session_id)
-    row = db.execute("SELECT * FROM chat_messages WHERE id=? AND session_id=? AND role='assistant'", (message_id, session_id)).fetchone()
-    if not row or row['status'] not in ('failed', 'canceled', 'interrupted'):
-        raise HTTPException(409, '只能重试失败、停止或中断的回答')
-    request_id = (row['request_id'] or '').removeprefix('answer:')
-    user = db.execute("SELECT * FROM chat_messages WHERE session_id=? AND request_id=? AND role='user'", (session_id, request_id)).fetchone()
-    return start_message(book_id, session_id, {'content': user['content'], 'references': json.loads(user['references_json']), 'request_id': body.get('request_id')}, retry_of=message_id)
-
-
-@router.post('/sessions/{session_id}/messages/{message_id}/cancel')
-async def cancel(book_id: str, session_id: str, message_id: str):
-    db = book_db(book_id)
-    session_record(db, session_id)
-    if not db.execute('SELECT 1 FROM chat_messages WHERE id=? AND session_id=?', (message_id, session_id)).fetchone():
-        raise HTTPException(404, '消息不存在')
-    signal = SIGNALS.get((book_id, session_id, message_id))
-    if signal:
-        signal.set()
-    return {'ok': True}
-
-
-@router.get('/sessions/{session_id}/messages/{message_id}/events')
-async def events(book_id: str, session_id: str, message_id: str, request: Request, after: int = Query(0, ge=0)):
-    db = book_db(book_id)
-    session_record(db, session_id)
-    if not db.execute('SELECT 1 FROM chat_messages WHERE id=? AND session_id=?', (message_id, session_id)).fetchone():
-        raise HTTPException(404, '消息不存在')
-    try:
-        cursor = max(after, int(request.headers.get('last-event-id', 0)))
-    except ValueError:
-        cursor = after
-
-    async def stream():
-        nonlocal cursor
-        while True:
-            for row in db.execute('SELECT * FROM chat_events WHERE message_id=? AND id>? ORDER BY id', (message_id, cursor)).fetchall():
-                cursor = row['id']
-                yield f"id: {cursor}\nevent: update\ndata: {dumps({'id': cursor, 'kind': row['kind'], 'data': json.loads(row['data_json'])})}\n\n"
-            row = db.execute('SELECT status FROM chat_messages WHERE id=?', (message_id,)).fetchone()
-            if not row or row['status'] not in ('queued', 'running'):
-                yield 'event: end\ndata: {}\n\n'
-                return
-            if await request.is_disconnected():
-                return
-            await asyncio.sleep(0.3)
-    return StreamingResponse(stream(), media_type='text/event-stream', headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
-
-
-@router.get('/sessions/{session_id}/export')
-async def export(book_id: str, session_id: str):
-    data = await get_session(book_id, session_id)
-    lines = ['# ' + data['title']]
-    for m in data['messages']:
-        lines.append('\n## ' + ('读者' if m['role'] == 'user' else 'Agent') + '\n\n' + m['content'])
-        for ref in m['references']:
-            lines.append(f"\n> {ref.get('quote') or ref['label']}\n\n[原文](#source={ref['chapter_idx']}:{ref['paragraph_index']})")
-        if m['status'] not in ('completed',):
-            lines.append('\n状态：' + m['status'])
-    return Response('\n'.join(lines), media_type='text/markdown; charset=utf-8', headers={'Content-Disposition': 'attachment; filename="conversation.md"'})
-
-
 class ChatHooks(RunHooks):
     def __init__(self, db, message_id, budget, signal):
         self.db, self.message_id, self.budget, self.signal = db, message_id, budget, signal
@@ -270,7 +151,7 @@ class ChatHooks(RunHooks):
         self.budget.check_running(self.signal)
         if self.budget.tool_calls >= self.budget.max_tool_calls:
             self.exhausted = True
-            agent.tools = []
+            agent.tools = SDKFunctionTools()
             event(self.db, self.message_id, 'status',
                   {'message': '工具预算已用完，基于已读材料回答', 'tool': tool.name, 'exhausted': True})
             return
@@ -292,7 +173,7 @@ async def answer(book_id, session_id, message_id, content, refs, signal):
         hooks = ChatHooks(db, message_id, budget, signal)
         ledger = {}
         tools = book_reading_tools(book_id, ledger)['tools']
-        from agent.engine import ToolSpec
+        from agent.runtime.engine import ToolSpec
 
         async def read_node(args):
             node = next((n for n in outline_nodes(book_id) if n['id'] == args.get('node_id')), None)
@@ -364,7 +245,7 @@ async def answer(book_id, session_id, message_id, content, refs, signal):
                   f'已有笔记只能作为参考。本次工具预算 {config.max_tool_calls} 次：优先粗读后精读，接近预算时停止检索并直接回答；'
                   '工具返回预算已用完时，必须停止调用工具，基于已读材料作答。证据不足就坦诚说明。')
         settings = ModelSettings(extra_body={'enable_thinking': False} if config.disable_thinking else None, tool_choice='auto')
-        agent = Agent(name='gnosys-conversation', instructions=prompt, model=build_model(config), tools=sdk_tools, model_settings=settings)
+        agent = Agent(name='gnosys-conversation', instructions=prompt, model=build_model(config), tools=SDKFunctionTools(sdk_tools), model_settings=settings)
         session = sdk_session(book_id, session_id)
         previous = await session.get_items()
         with db:

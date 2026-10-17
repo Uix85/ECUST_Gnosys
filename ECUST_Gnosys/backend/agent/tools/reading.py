@@ -2,15 +2,29 @@
 
 import json
 import re
+from pathlib import Path
 
-from agent.book import (
+from agent.runtime.engine import SkillSpec, ToolSpec
+from agent.tools.book import (
     book_db,
     get_paragraph,
     logical_paragraphs,
     normalize_text,
     text_hash,
 )
-from agent.engine import ToolSpec
+
+SKILL_NAME = "book-reading"
+SKILLS_DIR = Path(__file__).resolve().parents[1] / "skills"
+
+
+def load_book_reading_skill() -> str:
+    return (SKILLS_DIR / SKILL_NAME / "SKILL.md").read_text(encoding="utf-8")
+
+
+def book_reading_skills(book_id: str, ledger: dict, snapshot: str | None) -> list[SkillSpec]:
+    raw = book_reading_tools(book_id, ledger)
+    instructions = snapshot if snapshot is not None else load_book_reading_skill()
+    return [SkillSpec(SKILL_NAME, raw["description"], instructions, raw["tools"])]
 
 
 def _tool(
@@ -326,7 +340,7 @@ def book_reading_tools(book_id: str, ledger: dict[tuple[int, int], list[str]]) -
         keyword = (args.get("keyword") or "").strip()
         if not keyword:
             raise ValueError("keyword 不能为空")
-        from agent.index import glossary_entries
+        from agent.layers.l0_index import glossary_entries
 
         key = normalize_text(keyword)
         hits = []

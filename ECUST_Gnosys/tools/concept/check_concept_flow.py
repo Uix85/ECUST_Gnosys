@@ -42,7 +42,7 @@ class Checker:
 
 
 def find_position_with(book_id: str, term: str) -> tuple[int, int]:
-    from agent import book as agent_book
+    from agent.tools import book as agent_book
     for ci in range(20):
         try:
             _, paragraphs, _ = agent_book.logical_paragraphs(book_id, ci)
@@ -61,10 +61,10 @@ def main() -> int:
     parser.add_argument("--chapter", type=int, default=None)
     args = parser.parse_args()
 
-    from agent import book as agent_book
-    from agent.concept_tools import concept_skills
-    from agent import concept as task
-    from agent.selection import gate
+    from agent.tools import book as agent_book
+    from agent.tools.concept import concept_skills
+    from agent.layers import l4_concept as task
+    from agent.layers.l4_selection import gate
 
     book = args.book
     term = args.term

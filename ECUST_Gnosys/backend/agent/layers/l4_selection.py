@@ -219,4 +219,4 @@ if __name__ == "__main__":                             # ponytail: 一条可运�
     p3 = "在书中，对象与自我意识的关系构成了全书的主线。"
     d4 = gate("对象与自我意识的关系构成了全书的主线", p3, glossary=gl)
     assert d4.action == "confirm" and d4.candidates == ("自我意识", "对象")   # 术语表反向匹配优先
-    print("agent.selection 自检通过")
+    print("agent.layers.l4_selection 自检通过")

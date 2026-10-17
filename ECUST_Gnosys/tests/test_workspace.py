@@ -19,7 +19,7 @@ os.environ['GNOSYS_BOOKS_DIR'] = str(Path(TEMP.name) / 'books')
 os.environ['AGENT_API_KEY'] = 'offline-test-key'
 from httpx import AsyncClient, ASGITransport
 from server import app
-from agent.book import book_db, get_paragraph, logical_paragraphs, split_sentences
+from agent.tools.book import book_db, get_paragraph, logical_paragraphs, split_sentences
 from reader.workspace import outline_nodes, get_note, baseline, save_note, reference
 from reader.import_document import import_document
 from db.schema import get_db, close_db
@@ -37,14 +37,14 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         self.book = r.json()['folder']; fake_model.BOOK_ID=self.book
         self.base='/api/workspace/'+self.book; self.runs='/api/agent/'+self.book+'/runs'; self.chat='/api/chat/'+self.book
         self.model=ReadingModel()
-        self.patches=[patch('agent.layer_runs.build_model',return_value=self.model),patch('agent.run_service.build_model',return_value=self.model),patch('agent.chat.build_model',return_value=self.model)]
+        self.patches=[patch('agent.runs.layer.build_model',return_value=self.model),patch('agent.layers.l3_paragraph.build_model',return_value=self.model),patch('agent.chat.build_model',return_value=self.model)]
         for p in self.patches:p.start()
 
     async def asyncTearDown(self):
-        from agent.layer_runs import ACTIVE,CANCEL
+        from agent.runs.loop import _run_tasks, _cancel_signals
         from agent.chat import ACTIVE as CA,SIGNALS
-        for signal in list(CANCEL.values())+list(SIGNALS.values()):signal.set()
-        tasks=list(ACTIVE.values())+list(CA.values())
+        for signal in list(_cancel_signals.values())+list(SIGNALS.values()):signal.set()
+        tasks=list(_run_tasks.values())+list(CA.values())
         if tasks:await asyncio.gather(*tasks,return_exceptions=True)
         for p in self.patches:p.stop()
         await self.client.aclose()
@@ -203,13 +203,19 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         self.model.delay=.1
         sid=(await self.client.post(self.chat+'/sessions',json={})).json()['id'];r=await self.send(sid);mid=r.json()['message_id']
         r=await self.send(sid,req='other');self.assertEqual(r.status_code,409)
-        await asyncio.sleep(.25);await self.client.post(self.chat+f'/sessions/{sid}/messages/{mid}/cancel');data=await self.wait_chat(sid);self.assertEqual(data['messages'][-1]['status'],'canceled',data);self.assertTrue(data['messages'][-1]['content'])
+        for _ in range(500):
+            data=(await self.client.get(self.chat+'/sessions/'+sid)).json()
+            partial=next(m for m in data['messages'] if m['id']==mid)
+            if partial['content'] or partial['status'] not in ('queued','running'):break
+            await asyncio.sleep(.01)
+        self.assertTrue(partial['content'],partial)
+        await self.client.post(self.chat+f'/sessions/{sid}/messages/{mid}/cancel');data=await self.wait_chat(sid);self.assertEqual(data['messages'][-1]['status'],'canceled',data);self.assertTrue(data['messages'][-1]['content'])
         self.model.delay=0
         r=await self.client.post(self.chat+f'/sessions/{sid}/messages/{mid}/retry',json={'request_id':'retry-1'});self.assertEqual(r.status_code,200,r.text);data=await self.wait_chat(sid);self.assertEqual(data['messages'][-1]['status'],'completed',data)
         self.model.fail=True;r=await self.send(sid,req='failing');self.assertEqual(r.status_code,200);data=await self.wait_chat(sid);self.assertEqual(data['messages'][-1]['status'],'failed',data)
 
     async def test_chat_tool_budget_exhaustion_still_answers(self):
-        from agent.config import AgentConfig
+        from agent.runtime.config import AgentConfig
         cfg = AgentConfig(base_url='http://offline', model='fake', api_key='offline-test-key',
                           request_timeout=5, max_requests=8, max_tool_calls=0,
                           run_timeout=30, max_parallel=1)
@@ -239,7 +245,7 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         db.execute("INSERT INTO chat_messages(id,session_id,role,content,status,created_at) VALUES('interrupted',?,'assistant','partial','running','now')",(sid,));db.commit()
         from agent.chat import recover
         recover(self.book);row=db.execute("SELECT * FROM chat_messages WHERE id='interrupted'").fetchone();self.assertEqual(row['content'],'partial');self.assertEqual(row['status'],'interrupted')
-        from agent.layer_runs import validate_result
+        from agent.layers.policy import validate_result
         with self.assertRaises(ValueError):validate_result(self.book,{'content':'test','sources':[{'chapter_idx':1,'paragraph_index':0,'quote':SOURCE}]},{(0,3):[SOURCE]})
         r=await self.client.get('/read/'+self.book+'/0');self.assertEqual(r.status_code,200,r.text)
         r=await self.client.get('/notes/'+self.book);self.assertEqual(r.status_code,200,r.text)
@@ -249,7 +255,7 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         long_text = ('社会关系在实践中不断变化。' * 800) + '\n' + ('交往形成生活秩序。' * 800)
         r = await self.client.post('/upload', files={'file': ('长文本.txt', long_text.encode())})
         book = r.json()['folder']
-        from agent.outline import section_context
+        from agent.tools.context import section_context
         context = section_context(book, 0, 0)
         self.assertFalse(context['is_heading']); self.assertGreater(context['section_size'], 0)
         r = await self.client.post('/api/agent/' + book + '/runs', json={'layer': 'L1'})

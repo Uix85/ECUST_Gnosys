@@ -37,7 +37,7 @@ def main() -> int:
     parser.add_argument("--no-write", action="store_true", help="只打印，不写库")
     args = parser.parse_args()
 
-    from agent import index as agent_index
+    from agent.tools import index as agent_index
 
     targets = [args.book] if args.book else books()
     for name in targets:

@@ -31,6 +31,14 @@ class AgentCancelled(AgentError):
     pass
 
 
+class SDKFunctionTools(list):
+    """Keep list behavior while supporting SDKs that read tools.reading."""
+
+    @property
+    def reading(self):
+        return self
+
+
 @dataclass
 class LoopBudget:
     max_requests: int
@@ -79,7 +87,7 @@ EventWriter = Callable[[str, str, "dict | None"], Awaitable[None]]
 class LoopBudgetSpec:
     """任务级预算声明。AgentTask 未收到显式 LoopBudget 时用它构造。
 
-    段落链路由 run_service 持有一份跨阶段的共享预算，不走这里；
+    段落链路由 L3 层任务持有一份跨阶段的共享预算，不走这里；
     概念层（L4）的 map / locate 两阶段各有自己的额度，由 TaskSpec 声明。
     """
 
@@ -422,7 +430,7 @@ class AgentTask:
                 )
             )
         )
-        kwargs = {"model": self.model, "tools": tools}
+        kwargs = {"model": self.model, "tools": SDKFunctionTools(tools)}
         if self.config is not None:
             kwargs["model_settings"] = model_settings(self.config)
         agent = Agent(

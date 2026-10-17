@@ -1,85 +1,215 @@
-"""Database and paragraph-processing details for agent runs."""
+"""段落语义任务定义与书籍技能装配。"""
 
 import asyncio
 import json
-import os
+import re
 import time
 import uuid
-from datetime import datetime
 
+from agents import SQLiteSession
 from fastapi import HTTPException
 
-from agent.book import (book_db, current_baseline, fingerprint, get_paragraph,
-                        logical_paragraphs, semantic_needed)
-from agent.config import load_config
-from agent.engine import (
-    AgentTask,
+from agent.tools.book import (
+    book_db,
+    current_baseline,
+    get_paragraph,
+    logical_paragraphs,
+    semantic_needed,
+    split_sentences,
+)
+from agent.tools.reading import SKILL_NAME, book_reading_skills, load_book_reading_skill
+from agent.runtime.config import load_config
+from agent.runtime.engine import (
     AgentCancelled,
     AgentError,
+    AgentTask,
     LoopBudget,
+    SkillSpec,
+    SubmitSpec,
+    TaskSpec,
     build_model,
 )
-from agents import SQLiteSession
-import agent.tasks as paragraph_task
-from reader.book_service import BOOKS_DIR
+from agent.layers.policy import REVIEW_FIELDS, review_parameters, spec_text, validate_review
+from agent.runs.records import (
+    _baseline_matches,
+    _event,
+    is_book_deleting,
+    _json,
+    _now,
+    _persist_note,
+    _save_task,
+    _task_for_read,
+)
+
+GENERATE_REQUEST_LIMIT = 8  # 生成阶段最多 8 次模型请求；复核与修订吃共享预算剩下的
+
+# 提交结构（两个阶段各一套）
+RESULT_FIELDS = ("short", "detail", "sentences")
 
 
-_deleting_books: set[str] = set()
+def sentence_count(text: str) -> int:
+    """段落分句数。
+
+    直接复用 agent.tools.book.split_sentences —— validator 的期望值、前端挂逐句解释的口径、
+    L4 定位工具定位“第几句”必须是同一把尺子，否则逐句解释会与用户看到的一句错位。
+    （原先这里另写了一套正则计数，与分句器在 `让.瓦尔` 这类词内 ASCII 点上会不一致。）
+    """
+    return len(split_sentences(text))
 
 
-def _now() -> str:
-    return datetime.now().isoformat(timespec="microseconds")
+# 引号里的内容分两类：真引文（必须逐字对上原文）与模型自己的措辞（用引号做强调/领起）。
+# ponytail: 这里是启发式判定；实测 qwen 系模型常写「……并置：」这类领起语，
+# 若误当引文核验，会把整个段落预算烧光。若以后发现真引文被漏检，改成让模型显式标注引文。
+_QUOTE_RE = re.compile(r"“([^”]+)”|「([^」]+)」|『([^』]+)』|‘([^’]+)’|\"([^\"]+)\"")
 
 
-def _json(value) -> str:
-    return json.dumps(value, ensure_ascii=False)
+def looks_like_citation(quote: str) -> bool:
+    """引号里是“引用原文”还是模型自己的措辞。"""
+    text = quote.strip()
+    if len(text) < 6:
+        return False  # 短引号多为点名额（规范允许）
+    return text[-1] not in "：:，,、；;。———"  # 以标点收尾 = 强调/领起，不是整句引文
 
 
-def _event(db, run_id: str, task_id: str | None, stage: str, message: str, data=None):
-    db.execute(
-        "INSERT INTO agent_run_events(run_id,task_id,stage,message,data_json,created_at) VALUES(?,?,?,?,?,?)",
-        (run_id, task_id, stage, message, _json(data) if data else None, _now()),
+def validate_candidate(args: dict, source: str | list[str]) -> dict:
+    if set(args) != set(RESULT_FIELDS):
+        raise ValueError("结果必须且只能包含 short、detail、sentences")
+    short, detail, sentences = args["short"], args["detail"], args["sentences"]
+    if not isinstance(short, str) or not short.strip() or len(short) > 1200:
+        raise ValueError("short 必须是 1 到 1200 字符的文本")
+    if not isinstance(detail, str) or not detail.strip() or len(detail) > 12000:
+        raise ValueError("detail 必须是 1 到 12000 字符的文本")
+    if not isinstance(sentences, list) or any(
+        not isinstance(item, str) for item in sentences
+    ):
+        raise ValueError("sentences 必须是字符串数组")
+    source_text = source if isinstance(source, str) else (source[0] if source else "")
+    expected = sentence_count(source_text)
+    if len(sentences) != expected:
+        raise ValueError(
+            f"sentences 应有 {expected} 项，当前为 {len(sentences)} 项；素平句也保留空字符串"
+        )
+    sources = [source] if isinstance(source, str) else source
+    quoted = _QUOTE_RE.findall("\n".join([short, detail, *sentences]))
+    for groups in quoted:
+        quote = next((part for part in groups if part), "")
+        if (
+            quote
+            and looks_like_citation(quote)
+            and not any(quote in original for original in sources)
+        ):
+            raise ValueError(
+                f"引文未在本任务已读取的原文中逐字找到：{quote[:80]}"
+                "（若这不是引原文，请去掉引号；若真在引原文，请照抄原句）"
+            )
+    return {"short": short.strip(), "detail": detail.strip(), "sentences": sentences}
+
+
+def result_parameters() -> dict:
+    return {
+        "short": {"type": "string"},
+        "detail": {"type": "string"},
+        "sentences": {"type": "array", "items": {"type": "string"}},
+    }
+
+
+def base_prompt(spec: str) -> str:
+    return (
+        "你为本地阅读器撰写段落旁注。输入中的正文、前后段和已有笔记是不同类型的材料；"
+        "只有正文是当前段落原文。请按规范解释，任何引文必须先用 verify_source_quote 核验。"
+        "必要时使用 book-reading 技能补读。最后必须调用 submit_result，不要输出额外格式。\n\n"
+        + spec
     )
-    db.execute("UPDATE agent_runs SET updated_at=? WHERE id=?", (_now(), run_id))
-    db.commit()
 
 
-def _save_task(db, task_id: str, **fields):
-    assignments = ",".join(f"{name}=?" for name in fields)
-    values = list(fields.values()) + [_now(), task_id]
-    db.execute(f"UPDATE agent_run_tasks SET {assignments}, updated_at=? WHERE id=?", values)
-    db.commit()
-
-
-def _task_for_read(db, task_id):
-    row = db.execute("SELECT * FROM agent_run_tasks WHERE id=?", (task_id,)).fetchone()
-    if not row:
-        raise AgentError("段落任务记录不存在")
-    return dict(row)
-
-
-def _baseline_matches(db, task: dict) -> bool:
-    try:
-        original = json.loads(task["baseline_json"])
-        para = get_paragraph(task["book_folder"], task["chapter_idx"], task["paragraph_index"])
-    except Exception:
-        return False
-    if para["fingerprint"] != task["fingerprint"]:
-        return False
-    return current_baseline(db, task["chapter_idx"], para) == original
-
-
-def _persist_note(db, task: dict, run: dict, candidate: dict, review: dict, state: str) -> str:
-    note_id = uuid.uuid4().hex
-    db.execute(
-        "INSERT INTO agent_notes(id,chapter_idx,paragraph_index,fingerprint,source_text,short,detail,sentences,"
-        "review_json,baseline_json,state,model,spec_version,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (note_id, task["chapter_idx"], task["paragraph_index"], task["fingerprint"], task["source_text"],
-         candidate["short"], candidate["detail"], _json(candidate["sentences"]), _json(review),
-         task["baseline_json"], state, run["model"], run["spec_version"], _now()),
+def review_prompt() -> str:
+    return (
+        "你是独立审阅者。你没有参与候选稿生成；只按要求核查，不复述候选稿。"
+        "必要时用 book-reading 技能补读原文，最后调用 submit_review。"
     )
-    db.commit()
-    return note_id
+
+
+def revise_prompt(base: str) -> str:
+    return base + (
+        "\n\n你正在修订已有候选稿。上一稿和你的探索过程都还在你的记忆里，"
+        "不要重新检索，只修复 issues 中的实质问题；保留仍有原文依据的内容和分歧读法。"
+        "最终调用 submit_result 重新交一次完整结果。"
+    )
+
+
+def _sources(ledger: dict) -> list[str]:
+    return [chunk for chunks in ledger.values() for chunk in chunks]
+
+
+def generate_spec(
+    *, prompt: str, materials: dict, ledger: dict, skills: list[SkillSpec]
+) -> TaskSpec:
+    sources = _sources(ledger)
+    return TaskSpec(
+        layer="L3",
+        prompt=prompt,
+        materials=materials,
+        submit=SubmitSpec(
+            "submit_result",
+            "提交当前段落的三块语义解释。",
+            result_parameters(),
+            lambda args: validate_candidate(args, _sources(ledger)),
+            list(RESULT_FIELDS),
+        ),
+        skills=skills,
+        allowed_skills=[SKILL_NAME],
+        request_limit=GENERATE_REQUEST_LIMIT,
+    )
+
+
+def review_spec(*, materials: dict, skills: list[SkillSpec]) -> TaskSpec:
+    return TaskSpec(
+        layer="L3",
+        prompt=review_prompt(),
+        materials=materials,
+        submit=SubmitSpec(
+            "submit_review",
+            "提交独立复核结论。备选读法单独记录，不自动算作问题。",
+            review_parameters(),
+            validate_review,
+            list(REVIEW_FIELDS),
+        ),
+        skills=skills,
+        allowed_skills=[SKILL_NAME],
+    )
+
+
+def revise_spec(
+    *, prompt: str, materials: dict, ledger: dict, skills: list[SkillSpec]
+) -> TaskSpec:
+    return generate_spec(
+        prompt=prompt, materials=materials, ledger=ledger, skills=skills
+    )
+
+
+def review_materials(materials: dict, spec: str, candidate: dict) -> dict:
+    return {
+        **materials,
+        "constraints": {"material_type": "task_specification", "text": spec},
+        "candidate": {"material_type": "candidate_note", **candidate},
+        "review_task": (
+            "独立检查原文依据、说话立场、解释越界、关键遗漏和三块重复。"
+            "实质问题写 issues；仅有合理备选读法时保持 approved=true 并写入 alternatives。"
+        ),
+    }
+
+
+def revision_followup(review: dict) -> dict:
+    """修订阶段只送复核意见。
+
+    修订跑在生成阶段同一个 agent 上（记忆里的原文、工具结果、上一稿都还在），
+    再送一遍材料和候选稿反而让 prompt 重复膨胀一次 —— 这正是换复合循环要省的部分。
+    """
+    return {
+        "review": {"material_type": "review_result", **review},
+        "revise_task": "按上面的 issues 修订你上一稿，只改有实质问题的部分，"
+        "重新提交同样结构的结果。",
+    }
 
 
 class ParagraphRun:
@@ -115,7 +245,7 @@ class ParagraphRun:
             if self.paragraph[key]:
                 self.ledger[(ci, pi + offset)] = [self.paragraph[key]]
 
-        self.skills = paragraph_task.skills(book_id, self.ledger, run.get("skill_snapshot"))
+        self.skills = book_reading_skills(book_id, self.ledger, run.get("skill_snapshot"))
         self.materials = {
             "target": {"material_type": "original_text", "text": self.paragraph["text"]},
             "previous": {"material_type": "original_text", "text": self.paragraph["previous"]},
@@ -131,13 +261,13 @@ class ParagraphRun:
                 "snapshot": json.loads(task["baseline_json"]),
             },
         }
-        from agent.outline import section_context
+        from agent.tools.context import section_context
         self.materials['chapter_structure'] = section_context(book_id, ci, pi)
         for context_pi in self.materials['chapter_structure'].get('same_context_paragraphs', []):
             self.ledger.setdefault((ci, context_pi), []).append(get_paragraph(book_id, ci, context_pi)['text'])
-        self.spec, current_version = paragraph_task.spec_text(run["spec_type"])
+        self.spec, current_version = spec_text(run["spec_type"])
         self.spec_version = run.get("spec_version") or current_version
-        self.prompt = run.get("prompt_template") or paragraph_task.base_prompt(self.spec)
+        self.prompt = run.get("prompt_template") or base_prompt(self.spec)
         self.model = build_model(config)
         self.write_session = SQLiteSession(f"{self.task_id}-writing")
         self.write_tools = []
@@ -160,7 +290,7 @@ class ParagraphRun:
     async def _generate(self) -> dict:
         await self._emit("generate", "开始生成解释")
         candidate = await self._execute(
-            paragraph_task.generate_spec(
+            generate_spec(
                 prompt=self.prompt,
                 materials=self.materials,
                 ledger=self.ledger,
@@ -179,9 +309,9 @@ class ParagraphRun:
     async def _revise(self, review: dict) -> dict:
         await self._emit("revise", "按复核意见修订一次")
         candidate = await self._execute(
-            paragraph_task.revise_spec(
-                prompt=paragraph_task.revise_prompt(self.prompt),
-                materials=paragraph_task.revision_followup(review),
+            revise_spec(
+                prompt=revise_prompt(self.prompt),
+                materials=revision_followup(review),
                 ledger=self.ledger,
                 skills=self.skills,
             ),
@@ -193,8 +323,8 @@ class ParagraphRun:
 
     async def _review(self, candidate: dict, stage: str) -> dict:
         await self._emit(stage, "开始独立复核")
-        return await self._execute(paragraph_task.review_spec(
-            materials=paragraph_task.review_materials(self.materials, self.spec, candidate),
+        return await self._execute(review_spec(
+            materials=review_materials(self.materials, self.spec, candidate),
             skills=self.skills,
         ))
 
@@ -264,117 +394,11 @@ class ParagraphRun:
         }[status]
         await self._emit(status, message, {"note_id": note_id, "review": review})
 
-def preserve_candidate(db, run: dict, task_id: str, error: Exception, *, canceled: bool):
-    run_id = run["id"]
-    task = _task_for_read(db, task_id)
-    message = "任务已取消" if canceled else str(error)[:2000]
-    if task.get("candidate_json"):
-        try:
-            candidate = json.loads(task["candidate_json"])
-            issue = "复核前任务被取消" if canceled else f"复核未完成：{str(error)[:500]}"
-            review = {"approved": False, "issues": [issue], "alternatives": []}
-            note_id = _persist_note(db, task, run, candidate, review, "pending")
-            _save_task(
-                db,
-                task_id,
-                status="pending",
-                review_json=_json(review),
-                error="任务已取消，候选稿待核" if canceled else message,
-            )
-            _event(
-                db,
-                run_id,
-                task_id,
-                "pending",
-                "取消前生成的候选稿已保存为待核稿" if canceled else "候选稿已保存为待核稿",
-                {"note_id": note_id},
-            )
-            return
-        except Exception:
-            pass
-
-    status = "canceled" if canceled else "failed"
-    _save_task(db, task_id, status=status, error=message)
-    if not canceled:
-        _event(db, run_id, task_id, "failed", str(error)[:500])
-
-
-def start_run(db, run_id: str):
-    row = db.execute("SELECT * FROM agent_runs WHERE id=?", (run_id,)).fetchone()
-    if not row:
-        return None
-    run = dict(row)
-    run.update(json.loads(run["request_json"]))
-    db.execute("UPDATE agent_runs SET status='running',updated_at=? WHERE id=?", (_now(), run_id))
-    db.commit()
-    _event(db, run_id, None, "run", "段落任务开始")
-    tasks = db.execute(
-        "SELECT * FROM agent_run_tasks WHERE run_id=? AND status='queued' "
-        "ORDER BY chapter_idx,paragraph_index",
-        (run_id,),
-    ).fetchall()
-    return run, [dict(task) for task in tasks]
-
-
-def mark_task_running(db, task_id: str) -> None:
-    _save_task(db, task_id, status="running", error=None)
-
-
-def finish_run(db, run_id: str, cancelled: bool) -> None:
-    rows = db.execute("SELECT status FROM agent_run_tasks WHERE run_id=?", (run_id,)).fetchall()
-    statuses = [row["status"] for row in rows]
-    if cancelled or any(status in ("queued", "running") for status in statuses):
-        status = "canceled"
-    elif any(status == "failed" for status in statuses):
-        status = "failed"
-    elif any(status in ("pending", "conflict") for status in statuses):
-        status = "needs_review"
-    else:
-        status = "completed"
-    db.execute("UPDATE agent_runs SET status=?,updated_at=? WHERE id=?", (status, _now(), run_id))
-    db.commit()
-    _event(db, run_id, None, "run", f"任务结束：{status}")
-
-
-def cancel_remaining_tasks(db, run_id: str) -> None:
-    db.execute(
-        "UPDATE agent_run_tasks SET status='canceled',updated_at=? WHERE run_id=? AND status='queued'",
-        (_now(), run_id),
-    )
-    db.execute("UPDATE agent_runs SET status='canceled',updated_at=? WHERE id=?", (_now(), run_id))
-    db.commit()
-    _event(db, run_id, None, "canceled", "任务已取消")
-
-
-def fail_run(db, run_id: str, error: Exception) -> None:
-    db.execute(
-        "UPDATE agent_runs SET status='failed',error=?,updated_at=? WHERE id=?",
-        (str(error)[:2000], _now(), run_id),
-    )
-    db.commit()
-    _event(db, run_id, None, "failed", str(error)[:500])
-
-
-def serialize_run(db, run_id: str):
-    run = db.execute("SELECT * FROM agent_runs WHERE id=?", (run_id,)).fetchone()
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
-    tasks = db.execute(
-        "SELECT id,chapter_idx,paragraph_index,fingerprint,status,error,review_json,updated_at "
-        "FROM agent_run_tasks WHERE run_id=? ORDER BY chapter_idx,paragraph_index", (run_id,),
-    ).fetchall()
-    counts = {}
-    for task in tasks:
-        counts[task["status"]] = counts.get(task["status"], 0) + 1
-    return {"id": run["id"], "status": run["status"], "model": run["model"],
-            "created_at": run["created_at"], "updated_at": run["updated_at"], "error": run["error"],
-            "counts": counts, "tasks": [dict(t) for t in tasks]}
-
 
 def prepare_run(
     book_id: str, request: dict, selected_refs: list[dict] | None = None
 ) -> tuple[dict, str | None]:
-    if book_id in _deleting_books:
+    if is_book_deleting(book_id):
         raise HTTPException(status_code=409, detail="此书正在删除")
     db = book_db(book_id)
     mode = request.get("mode", "fill_missing")
@@ -437,11 +461,11 @@ def prepare_run(
     config = load_config()
     if not config.api_key:
         raise HTTPException(422, detail="请配置 AGENT_API_KEY")
-    spec, spec_version = paragraph_task.spec_text(spec_type)
-    prompt_template = request.get("prompt_template") or paragraph_task.base_prompt(spec)
+    spec, spec_version = spec_text(spec_type)
+    prompt_template = request.get("prompt_template") or base_prompt(spec)
     skill_snapshot = request.get("skill_snapshot")
     if skill_snapshot is None:
-        skill_snapshot = paragraph_task.load_book_reading_skill()
+        skill_snapshot = load_book_reading_skill()
     run_id = uuid.uuid4().hex
     now = _now()
     run_request = {"mode": mode, "spec_type": spec_type,
@@ -461,47 +485,3 @@ def prepare_run(
     db.commit()
     _event(db, run_id, None, "queued", "任务已排队", {"estimated_count": len(candidates), "mode": mode, "spec_type": spec_type})
     return ({"id": run_id, "existing": False, "estimated_count": len(candidates), "status": "queued"}, run_id)
-
-
-def cancel_run_record(book_id: str, run_id: str, signal=None) -> dict:
-    db = book_db(book_id)
-    if not db.execute("SELECT 1 FROM agent_runs WHERE id=?", (run_id,)).fetchone():
-        raise HTTPException(status_code=404, detail="Run not found")
-    if signal:
-        signal.set()
-    db.execute(
-        "UPDATE agent_runs SET status='canceling',updated_at=? "
-        "WHERE id=? AND status IN ('queued','running')",
-        (_now(), run_id),
-    )
-    db.commit()
-    _event(db, run_id, None, "canceling", "收到取消请求")
-    return {"ok": True, "run_id": run_id}
-
-
-def mark_book_deleting(book_id: str) -> None:
-    _deleting_books.add(book_id)
-
-
-def allow_book_runs(book_id: str) -> None:
-    _deleting_books.discard(book_id)
-
-
-def recover_interrupted_runs():
-    if not os.path.isdir(BOOKS_DIR):
-        return
-    for folder in os.listdir(BOOKS_DIR):
-        path = os.path.join(BOOKS_DIR, folder, "book.db")
-        if not folder.endswith("_data") or not os.path.isfile(path):
-            continue
-        try:
-            db = book_db(folder)
-            rows = db.execute("SELECT id FROM agent_runs WHERE status IN ('queued','running','canceling')").fetchall()
-            if rows:
-                db.execute("UPDATE agent_runs SET status='interrupted',updated_at=? WHERE status IN ('queued','running','canceling')", (_now(),))
-                db.execute("UPDATE agent_run_tasks SET status='interrupted',updated_at=? WHERE status IN ('queued','running')", (_now(),))
-                db.commit()
-        except Exception:
-            continue
-
-

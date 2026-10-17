@@ -12,9 +12,9 @@
 
 import json
 
-from agent.book import book_db, get_paragraph, logical_paragraphs, normalize_text
-from agent.engine import LoopBudgetSpec, SubmitSpec, TaskSpec
-from agent.concept_tools import concept_skills
+from agent.tools.book import book_db, get_paragraph, logical_paragraphs, normalize_text
+from agent.runtime.engine import LoopBudgetSpec, SubmitSpec, TaskSpec
+from agent.tools.concept import concept_skills
 
 READING_MAX = 200          # 弹窗长度上限（待实测调整）：只约束单条，条目数不限（前端折叠）
 DEFINITION_NOTE_MAX = 600
@@ -259,7 +259,7 @@ def locate_materials(book_id: str, term: str, ci: int, pi: int, ledger: dict,
                      map_senses: list | None = None, glossary_entry: str | None = None,
                      window: int = 1) -> dict:
     """定位材料。把本段与邻段原文写进 ledger —— 引文核验只认账本，这个不变量必须在这里保证。"""
-    from agent.book import split_sentences, text_hash
+    from agent.tools.book import split_sentences, text_hash
     item = get_paragraph(book_id, ci, pi)
     text = item["text"]
     sentences = split_sentences(text)
@@ -364,3 +364,42 @@ def _reading_parameters() -> dict:
             "emphasis_here": {"type": "object"}, "stance": {"type": "string"},
             "quotes": {"type": "array", "items": {"type": "string"}},
             "needs_mapping": {"type": "boolean"}}
+
+
+async def generate(run, review=None):
+    from agent.tools.concept import _distribution
+    term, ci, pi = run.target['term'], run.target['chapter_idx'], run.target['paragraph_index']
+    dist = _distribution(run.book_id, term)
+    cache_key = 'concept-map:' + term
+    cached = run.db.execute('SELECT value_json FROM reader_state WHERE key=?', (cache_key,)).fetchone()
+    mapping = json.loads(cached[0]) if cached and not review else None
+    # Mapping cache carries source fingerprints; changed text invalidates it.
+    if mapping and any(get_paragraph(run.book_id, r['chapter_idx'], r['paragraph_index'])['fingerprint'] != r['fingerprint'] for r in mapping['references']):
+        mapping = None
+    senses = mapping['map']['senses'] if mapping else None
+    material = locate_materials(run.book_id, term, ci, pi, run.ledger, map_senses=senses)
+    result = await run.execute('', {}, spec=locate_spec(book_id=run.book_id, materials=material, ledger=run.ledger, has_map=bool(mapping)))
+    if not mapping or result['needs_mapping']:
+        material = map_materials(term, ci, pi, dist['total'], dist['chapters'], senses)
+        if review:
+            material['revision_issues'] = review
+        mapped = await run.execute('', {}, spec=map_spec(book_id=run.book_id, materials=material, ledger=run.ledger, term_chapter_count=len(dist['chapters'])))
+        refs = []
+        for sense in mapped['senses']:
+            for r in sense['evidence']:
+                refs.append({**r, 'fingerprint': get_paragraph(run.book_id, r['chapter_idx'], r['paragraph_index'])['fingerprint']})
+        mapping = {'map': mapped, 'references': refs}
+        run.candidate = {'content': '\n\n'.join(s['reading'] for s in mapped['senses']), 'sources': [{k: r[k] for k in ('chapter_idx', 'paragraph_index', 'quote')} for r in refs]}
+        run.persist()
+        material = locate_materials(run.book_id, term, ci, pi, run.ledger, map_senses=mapped['senses'])
+        result = await run.execute('', {}, spec=locate_spec(book_id=run.book_id, materials=material, ledger=run.ledger, has_map=True))
+    if result['needs_mapping']:
+        raise ValueError('补读建图后仍无足够证据；请查看待核材料')
+    run.mapping = mapping
+    for r in mapping['references']:
+        run.remember(r['chapter_idx'], [get_paragraph(run.book_id, r['chapter_idx'], r['paragraph_index'])])
+    parts = [f"## {term}\n\n{result['reading']}", f"### 日常读法\n{result['common_reading']}",
+             '### 定义与证据性质\n' + mapping['map']['has_definition'] + '\n' + (mapping['map']['definition_note'] or ''), '### 意义地图']
+    for i, sense in enumerate(mapping['map']['senses'], 1):
+        parts.append(f"{i}. {sense['reading']}\n\n适用范围：{sense['scope']} {sense['range_note'] or ''}\n\n演化：{'连接下一义项' if sense['evolves_to_next'] else '终点'}；{sense['distinction_note'] or ''}")
+    return {'content': '\n\n'.join(parts), 'sources': [{k: r[k] for k in ('chapter_idx', 'paragraph_index', 'quote')} for r in mapping['references']]}

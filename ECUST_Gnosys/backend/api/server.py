@@ -29,9 +29,9 @@ from reader.book_service import (
     _get_anchor_chapter_map,
 )
 from reader.auxiliary_reading import router as layer_router
-from agent.run_api import router as agent_router
-from agent.run_service import allow_book_runs, recover_interrupted_runs
-from agent.runs import cancel_book_runs
+from agent.api import agent_router, chat_router
+from agent.runs.records import allow_book_runs, recover_interrupted_runs
+from agent.runs.loop import cancel_book_runs
 from db.schema import close_db
 from starlette.middleware.gzip import GZipMiddleware
 
@@ -46,7 +46,6 @@ app.include_router(layer_router)
 app.include_router(agent_router)
 from reader.workspace import router as workspace_router
 app.include_router(workspace_router)
-from agent.chat import router as chat_router
 app.include_router(chat_router)
 
 
@@ -54,7 +53,7 @@ app.include_router(chat_router)
 async def recover_agent_tasks():
     recover_interrupted_runs()
     from agent.chat import recover
-    from agent.book import book_db
+    from agent.tools.book import book_db
     from reader.workspace import dumps, now
     import json
     import uuid
@@ -113,13 +112,13 @@ async def settings_view(request: Request):
 
 @app.get("/api/settings")
 async def read_settings():
-    from agent.config import settings_snapshot
+    from agent.runtime.config import settings_snapshot
     return settings_snapshot()
 
 
 @app.put("/api/settings")
 async def update_settings(body: dict = Body(...)):
-    from agent.config import save_settings
+    from agent.runtime.config import save_settings
     try:
         # 不缓存：保存后下一次 load_config() 立刻生效（进程环境变量仍优先）
         return save_settings(body.get("values", {}))
@@ -188,16 +187,11 @@ async def delete_book(book_id: str):
         raise HTTPException(status_code=400, detail="置顶书不可删除")
 
     await cancel_book_runs(safe)
-    from agent.layer_runs import ACTIVE, CANCEL
-    pending = [task for key, task in list(ACTIVE.items()) if key[0] == safe]
-    for key, signal in list(CANCEL.items()):
-        if key[0] == safe:
-            signal.set()
     from agent.chat import ACTIVE as CHAT_ACTIVE, SIGNALS
     for key, signal in list(SIGNALS.items()):
         if key[0] == safe:
             signal.set()
-    pending.extend(task for key, task in list(CHAT_ACTIVE.items()) if key[0] == safe)
+    pending = [task for key, task in list(CHAT_ACTIVE.items()) if key[0] == safe]
     if pending:
         import asyncio
         await asyncio.gather(*pending, return_exceptions=True)

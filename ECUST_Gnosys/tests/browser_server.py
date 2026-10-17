@@ -15,10 +15,12 @@ source=Path(DATA.name)/'社会关系与实践.txt'
 source.write_text('第一章 社会关系\n第一节 实践\n一、观察\n'+SOURCE+'\n二、交往\n社会关系意味着实践中形成的联系。人们在交往中形成生活秩序。\n第二章 社会秩序\n第一节 实践\n社会关系在重复行动中逐渐稳定。我们由此观察秩序的形成。',encoding='utf-8')
 folder=import_document(source,os.environ['GNOSYS_BOOKS_DIR']);fake_model.BOOK_ID=Path(folder).name
 from server import app
-from agent import layer_runs,run_service,chat
+from agent.runs import layer
+from agent.layers import l3_paragraph
+from agent import chat
 model=ReadingModel(delay=float(os.environ.get('GNOSYS_QA_DELAY','.015')))
-layer_runs.build_model=lambda _:model
-run_service.build_model=lambda _:model
+layer.build_model=lambda _:model
+l3_paragraph.build_model=lambda _:model
 chat.build_model=lambda _:model
 print('QA_BOOK='+fake_model.BOOK_ID,flush=True)
 if __name__=='__main__':

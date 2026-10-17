@@ -19,7 +19,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(ROOT, "backend"))
 
 from reader import locator  # noqa: E402
-from agent.book import split_paragraphs  # noqa: E402
+from agent.tools.book import split_paragraphs  # noqa: E402
 from reader.book_service import (BOOKS_DIR, _build_chapters, _chapter_slice_anchors,  # noqa: E402
                                  _get_toc_pages, _get_unified_html_cached, _slice_content,
                                  load_book_cached)

@@ -28,12 +28,12 @@ import re
 import sys as _sys
 from pathlib import Path as _Path
 
-# 允许 `uv run python backend/agent/outline.py` 直接跑文件尾的自检（与 reader/import_epub.py 同约定）
-_BACKEND_DIR = str(_Path(__file__).resolve().parents[1])
+# 允许 `uv run python backend/agent/tools/context.py` 直接跑文件尾的自检（与 reader/import_epub.py 同约定）
+_BACKEND_DIR = str(_Path(__file__).resolve().parents[2])
 if _BACKEND_DIR not in _sys.path:
     _sys.path.insert(0, _BACKEND_DIR)
 
-from agent.book import book_db, logical_paragraphs, normalize_text
+from agent.tools.book import book_db, logical_paragraphs, normalize_text
 
 # ── 标题规则表 ─────────────────────────────────────────
 # 规则**按顺序**匹配：命中的规则下标就是层级深度（0 最浅）。顺序即层级，不要随意重排。
@@ -312,4 +312,4 @@ if __name__ == "__main__":                       # ponytail: 一条可运行的�
     assert heading_level("那超感官界因此乃是作为现象的现象。") is None      # 正文，不是标题
     assert heading_level("所以万有引力的规律或纯粹概念与特殊的规律相对立。") is None
     assert heading_level("1．这是一句以编号开头但其实是正文的完整句子。") is None
-    print("agent.outline 自检通过")
+    print("agent.tools.context 自检通过")

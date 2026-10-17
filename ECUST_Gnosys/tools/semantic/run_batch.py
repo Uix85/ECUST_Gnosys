@@ -27,7 +27,7 @@ def default_book() -> str:
 
 
 def refs_for(book_id: str, chapter_idx: int, count: int) -> list[dict]:
-    from agent import book as agent_book
+    from agent.tools import book as agent_book
 
     _, paragraphs, _ = agent_book.logical_paragraphs(book_id, chapter_idx)
     picked = []
@@ -82,9 +82,9 @@ def collect(db, run_id: str, elapsed: float) -> dict:
 
 async def run_batch(book_id: str, chapter_idx: int, count: int) -> dict:
     sys.path.insert(0, str(BACKEND))
-    from agent import book as agent_book  # noqa: E402
-    from agent import runs as agent_runs   # noqa: E402
-    from agent.config import load_config   # noqa: E402
+    from agent.tools import book as agent_book  # noqa: E402
+    from agent.runs import loop as agent_runs   # noqa: E402
+    from agent.runtime.config import load_config   # noqa: E402
     from db.schema import close_db, get_db  # noqa: E402
 
     db_path = ROOT / "books" / book_id / "book.db"

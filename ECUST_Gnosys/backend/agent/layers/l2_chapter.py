@@ -12,15 +12,22 @@
 import json
 import re
 
-from agent.book import (book_db, fingerprint, get_paragraph, logical_paragraphs,
+from agent.tools.book import (book_db, fingerprint, get_paragraph, logical_paragraphs,
                         normalize_text, split_sentences, text_hash)
-from agent.engine import LoopBudgetSpec, SubmitSpec, TaskSpec
-from agent.tasks import skills as reading_skills
+from agent.runtime.engine import LoopBudgetSpec, SubmitSpec, TaskSpec
+from agent.tools.reading import book_reading_skills as reading_skills
 
 ROLES = ("frontmatter", "setting", "definition", "argument", "transition", "recap", "aside")
 WEIGHTS = ("core", "support", "minor")
 MAX_NAV_CHARS = 80                  # 每段一行导航：概括截断长度（在标点处断）
 BANNED = re.compile(r"甩锅|爆雷|账本|钉死|我们读者|你会发现")
+
+
+async def generate_legacy(run):
+    """Run the legacy chapter-summary flow exposed by the Agent API."""
+    from agent.layers.l1_book import summarize_coverage
+
+    return await summarize_coverage(run, [run.target["chapter_idx"]])
 
 
 # ── 材料组装（管线，机械）────────────────────────────────
@@ -76,7 +83,7 @@ def existing_l2(book_id: str, chapter_idx: int) -> str:
 
 def glossary_hits(book_id: str, paragraphs: list[dict]) -> list[dict]:
     """预筛（管线）：只把**在本章出现过**的术语表条目放进材料，不塞全表。"""
-    from agent.index import glossary_entries
+    from agent.layers.l0_index import glossary_entries
     blob = normalize_text("".join(p["text"] for p in paragraphs))
     hits = []
     for name, entry in glossary_entries().items():

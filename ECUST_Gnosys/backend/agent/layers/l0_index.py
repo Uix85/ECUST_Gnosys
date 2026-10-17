@@ -26,13 +26,13 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path as _Path
 
-# 允许 `uv run python backend/agent/index.py` 直接跑文件尾的自检（与 reader/import_epub.py 同约定）
-_BACKEND_DIR = str(_Path(__file__).resolve().parents[1])
+# 允许 `uv run python backend/agent/layers/l0_index.py` 直接跑文件尾的自检（与 reader/import_epub.py 同约定）
+_BACKEND_DIR = str(_Path(__file__).resolve().parents[2])
 if _BACKEND_DIR not in _sys.path:
     _sys.path.insert(0, _BACKEND_DIR)
 
-from agent.book import BOOKS_DIR, book_db, logical_paragraphs, normalize_text
-from agent.config import ROOT_DIR
+from agent.tools.book import BOOKS_DIR, book_db, logical_paragraphs, normalize_text
+from agent.runtime.config import ROOT_DIR
 
 NGRAM_MIN, NGRAM_MAX = 2, 6
 MIN_TOTAL, MIN_PARAS = 3, 2      # 频次地板：低于此不作候选（顺带滤掉盗版站广告这类一次性文本）
@@ -377,4 +377,4 @@ if __name__ == "__main__":                             # ponytail: 纯函数自�
     entries = glossary_entries()
     assert len(entries) >= 10, f"书目知识条目太少：{len(entries)}"
     assert "这一个" in entries or "共相" in entries
-    print(f"agent.index 纯函数自检通过（书目知识条目 {len(entries)} 条）")
+    print(f"agent.layers.l0_index 纯函数自检通过（书目知识条目 {len(entries)} 条）")

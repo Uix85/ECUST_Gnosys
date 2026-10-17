@@ -196,7 +196,7 @@ def _extract_headings(html: str) -> str:
     历史数据里这个字段有的是那位另一版代码导入的（带 level+text），格式保持一致。
 
     txt 源没有标题标签，这里会返回空数组 —— 那种情况改由 agent/outline.py 的
-    文本行模式推断兜底（见 backend/agent/outline.py）。
+    文本行模式推断兜底（见 backend/agent/tools/context.py）。
     """
     import re as _re
     out = []

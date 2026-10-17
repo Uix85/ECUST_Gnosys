@@ -25,8 +25,8 @@ def books() -> list[str]:
 
 
 def scan(book: str, chapter: int | None, tree: bool) -> None:
-    from agent import book as agent_book
-    from agent import outline as book_outline
+    from agent.tools import book as agent_book
+    from agent.tools import outline as book_outline
 
     n_ch = 0
     while True:
