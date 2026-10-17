@@ -88,6 +88,8 @@ def _evidence_chapters(evidence: list, sources: list[str], book_id: str) -> set:
     for item in evidence:
         _check_position(book_id, item.get("chapter_idx"), item.get("paragraph_index"))
         _check_quote(item.get("quote", ""), sources)
+        original = get_paragraph(book_id, item["chapter_idx"], item["paragraph_index"])["text"]
+        _check_quote(item.get("quote", ""), [original])
         chapters.add(item["chapter_idx"])
     return chapters
 
@@ -316,7 +318,7 @@ def map_spec(*, book_id: str, materials: dict, ledger: dict, term_chapter_count:
         materials=materials,
         submit=SubmitSpec("submit_concept_map", "提交该术语的意义地图（义项、范围、维度）。",
                           _map_parameters(),
-                          lambda args: validate_map(args, sources, book_id, term_chapter_count),
+                          lambda args: validate_map(args, [chunk for chunks in ledger.values() for chunk in chunks], book_id, term_chapter_count),
                           list(MAP_FIELDS)),
         skills=concept_skills(book_id, ledger, "mapping"),
         allowed_skills=["concept-mapping"],
@@ -332,7 +334,7 @@ def locate_spec(*, book_id: str, materials: dict, ledger: dict, has_map: bool) -
         prompt=locate_prompt(has_map),
         materials=materials,
         submit=SubmitSpec("submit_concept_reading", "提交该处该怎么读，或上报证据不足。",
-                          _reading_parameters(), lambda args: validate_reading(args, sources),
+                          _reading_parameters(), lambda args: validate_reading(args, [chunk for chunks in ledger.values() for chunk in chunks]),
                           list(READING_FIELDS)),
         skills=concept_skills(book_id, ledger, "locating"),
         allowed_skills=["concept-reading"],

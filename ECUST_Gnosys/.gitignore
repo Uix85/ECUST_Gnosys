@@ -16,6 +16,7 @@ wheels/
 # SQLite WAL 模式运行时文件（非真实数据，不应入库）
 *.db-shm
 *.db-wal
+*.before-workspace-v*.bak
 
 # 临时产物目录：内容全部忽略，只保留说明
 /tmp/*

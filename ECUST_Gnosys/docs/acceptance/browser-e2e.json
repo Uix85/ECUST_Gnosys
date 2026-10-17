@@ -1,0 +1,154 @@
+{
+  "origin": "http://127.0.0.1:8137",
+  "spaceId": 6,
+  "passed": 22,
+  "results": [
+    {
+      "name": "书库搜索与继续阅读",
+      "status": "passed",
+      "evidence": "http://127.0.0.1:8137/read/%E7%A4%BE%E4%BC%9A%E5%85%B3%E7%B3%BB%E4%B8%8E%E5%AE%9E%E8%B7%B5-713a3b54672c_data/0#source=0:0"
+    },
+    {
+      "name": "多层目录补全、多目录引用、Esc 与划线引用",
+      "status": "passed",
+      "evidence": 3
+    },
+    {
+      "name": "流式对话及完整 Markdown",
+      "status": "passed",
+      "evidence": {
+        "table": true,
+        "nested": true,
+        "math": true,
+        "highlight": true,
+        "checked": true,
+        "source": true
+      }
+    },
+    {
+      "name": "对话来源可点击返回原文",
+      "status": "passed",
+      "evidence": "#source=0:3"
+    },
+    {
+      "name": "追问与刷新后的会话历史",
+      "status": "passed",
+      "evidence": 2
+    },
+    {
+      "name": "流式中刷新后续接且内容不重复",
+      "status": "passed",
+      "evidence": {
+        "count": 3,
+        "analysis": 1,
+        "formula": true
+      }
+    },
+    {
+      "name": "危险 HTML/链接与未闭合代码块",
+      "status": "passed",
+      "evidence": {
+        "unsafe": false,
+        "strike": true,
+        "quote": true,
+        "math": true,
+        "unfinishedCode": true
+      }
+    },
+    {
+      "name": "笔记编辑、预览、保存与 Markdown 导出",
+      "status": "passed",
+      "evidence": "/tmp/gnosys-e2e-note.md"
+    },
+    {
+      "name": "全书 AI 从页面触发至完整覆盖汇总",
+      "status": "passed",
+      "evidence": "completed"
+    },
+    {
+      "name": "并发保存冲突保留输入并导出备份",
+      "status": "passed",
+      "evidence": "/tmp/gnosys-e2e-conflict.md"
+    },
+    {
+      "name": "章节 AI 从页面触发至完成",
+      "status": "passed",
+      "evidence": "completed"
+    },
+    {
+      "name": "语义 AI 与段落旁注发布",
+      "status": "passed",
+      "evidence": true
+    },
+    {
+      "name": "划词概念 AI、意义地图与当前位置解释",
+      "status": "passed",
+      "evidence": "completed"
+    },
+    {
+      "name": "停止回答并保留历史",
+      "status": "passed",
+      "evidence": true
+    },
+    {
+      "name": "对话 Markdown 导出",
+      "status": "passed",
+      "evidence": "/tmp/gnosys-e2e-chat.md"
+    },
+    {
+      "name": "会话重命名与删除",
+      "status": "passed",
+      "evidence": true
+    },
+    {
+      "name": "全文搜索、原文定位与书签",
+      "status": "passed",
+      "evidence": true
+    },
+    {
+      "name": "阅读字号与行距持久化",
+      "status": "passed",
+      "evidence": true
+    },
+    {
+      "name": "辅助面板拖动与宽度持久化",
+      "status": "passed",
+      "evidence": {
+        "width": 323.9985656738281,
+        "saved": 323.9985656738281
+      }
+    },
+    {
+      "name": "1440 与 1024 桌面布局",
+      "status": "passed",
+      "evidence": [
+        {
+          "viewport": 1440,
+          "scroll": 1440,
+          "reading": 874.0056762695312,
+          "panel": 323.9985656738281,
+          "sendRight": 1428.004249572754,
+          "appbarRight": 1416.0013580322266
+        },
+        {
+          "viewport": 1024,
+          "scroll": 1024,
+          "reading": 458.5511169433594,
+          "panel": 323.9985656738281,
+          "sendRight": 1012.5496597290039,
+          "appbarRight": 1008.5511016845703
+        }
+      ]
+    },
+    {
+      "name": "减少动态效果设置",
+      "status": "passed",
+      "evidence": true
+    },
+    {
+      "name": "浏览器未捕获异常",
+      "status": "passed",
+      "evidence": []
+    }
+  ]
+}

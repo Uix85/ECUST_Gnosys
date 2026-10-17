@@ -109,7 +109,8 @@ def logical_paragraphs(book_id: str, chapter_idx: int) -> tuple[dict, list[dict]
                 for node in nodes
             )
             if normalize_text(text):
-                paragraphs.append({"paragraph_index": len(paragraphs), "text": text})
+                paragraphs.append({"paragraph_index": len(paragraphs), "text": text,
+                                   "html": "".join(str(node) for node in nodes), "tag": block.name})
             nodes.clear()
 
         for node in block.children:
@@ -160,7 +161,9 @@ def current_baseline(db, chapter_idx: int, para: dict) -> dict:
         "WHERE text_hash=?",
         (text_hash(para["text"]),),
     ).fetchone()
+    manual = db.execute("SELECT content,revision,updated_at FROM workspace_notes WHERE key=?", (f"L3:{chapter_idx}:{para['paragraph_index']}",)).fetchone()
     return {
+        "workspace": dict(manual) if manual else None,
         "agent": dict(row) if row else None,
         "legacy": dict(old) if old else None,
     }

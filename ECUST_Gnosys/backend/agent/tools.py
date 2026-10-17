@@ -231,6 +231,16 @@ def book_reading_tools(book_id: str, ledger: dict[tuple[int, int], list[str]]) -
             ),
             "concepts": concepts,
         }
+        from reader.workspace import get_note
+        layers['book'] = get_note(book_id, 'L1', {})['content'][:8000]
+        layers['chapter'] = get_note(book_id, 'L2', {'chapter_idx': ci})['content'][:8000]
+        manual = db.execute('SELECT content FROM workspace_notes WHERE key=?', (f'L3:{ci}:{pi}',)).fetchone()
+        if manual:
+            layers['semantic'] = {'content': manual['content'], 'quality': '参考，不是原文证据'}
+        for entry in db.execute("SELECT target_json,content FROM workspace_notes WHERE layer='L4'"):
+            target = json.loads(entry['target_json'])
+            if target.get('chapter_idx') == ci and target.get('paragraph_index') == pi:
+                layers['concepts'].append({'term': target['term'], 'content': entry['content']})
         reference = {
             "chapter_idx": ci,
             "paragraph_index": pi,
@@ -291,23 +301,13 @@ def book_reading_tools(book_id: str, ledger: dict[tuple[int, int], list[str]]) -
             row = _chapter_layer_row(db, book_row["id"], ci, book_id)
         else:
             raise ValueError("layer 只能是 book 或 chapter")
-        if not row:
-            return {
-                "material_type": "layer_note",
-                "layer": layer,
-                "chapter_idx": ci,
-                "available": False,
-                "content": "",
-                "note": "该层还没有内容（这不是错误，降级处理即可）",
-            }
+        from reader.workspace import get_note
+        note = get_note(book_id, 'L1' if layer == 'book' else 'L2', {} if layer == 'book' else {'chapter_idx': ci})
         return {
-            "material_type": "layer_note",
-            "layer": layer,
-            "chapter_idx": ci,
-            "available": True,
-            "content": row["content"] or "",
-            "model_version": row["model_version"] or "",
-            "note": "这是上一层的解释内容，不是原文证据，不得当作引文依据",
+            'material_type': 'layer_note', 'layer': layer, 'chapter_idx': ci,
+            'available': bool(note['content']), 'content': note['content'],
+            'model_version': note['model'],
+            'note': '这是已有解释，不是原文证据，不得当作引文依据',
         }
 
     async def read_glossary(args):

@@ -44,11 +44,30 @@ app.mount("/static", StaticFiles(directory=os.path.join(ROOT_DIR, "frontend", "s
 # 辅助阅读（四层级 AI 功能）独立挂载，与基础阅读路由隔离
 app.include_router(layer_router)
 app.include_router(agent_router)
+from reader.workspace import router as workspace_router
+app.include_router(workspace_router)
+from agent.chat import router as chat_router
+app.include_router(chat_router)
 
 
 @app.on_event("startup")
 async def recover_agent_tasks():
     recover_interrupted_runs()
+    from agent.chat import recover
+    from agent.book import book_db
+    from reader.workspace import dumps, now
+    import json
+    import uuid
+    for folder in os.listdir(BOOKS_DIR) if os.path.isdir(BOOKS_DIR) else []:
+        if not folder.endswith('_data') or not os.path.isfile(os.path.join(BOOKS_DIR, folder, 'book.db')):
+            continue
+        recover(folder)
+        db = book_db(folder)
+        for row in db.execute("SELECT r.id,r.request_json,x.* FROM agent_runs r JOIN layer_results x ON r.id=x.run_id WHERE r.status='interrupted' AND x.candidate_json IS NOT NULL").fetchall():
+            if not db.execute('SELECT 1 FROM layer_drafts WHERE run_id=?', (row['id'],)).fetchone():
+                request = json.loads(row['request_json'])
+                with db:
+                    db.execute('INSERT INTO layer_drafts VALUES(?,?,?,?,?,?,?,?,?,?)', (uuid.uuid4().hex, row['id'], request['note_key'], request['layer'], dumps(request['target']), row['candidate_json'], dumps({'approved': False, 'issues': ['服务重启，候选稿未完成复核']}), row['baseline_json'], 'pending', now()))
 
 # 大 JSON / 长章节 HTML 压缩传输（§5-6 章正文与语义层条目可达 1MB+）
 # compresslevel=1：压缩比仍约 3-4 倍，但耗时远低于默认 6（本地与局域网都不吃亏）
@@ -108,10 +127,9 @@ async def upload_epub(file: UploadFile = File(...)):
         tmp_path = tmp.name
 
     try:
-        if ext == '.epub':
-            out_dir = process_epub_to_sqlite(tmp_path, BOOKS_DIR)
-        elif ext == '.txt':
-            raise HTTPException(status_code=400, detail="TXT 支持尚未迁移到 SQLite")
+        from reader.import_document import import_document
+        from starlette.concurrency import run_in_threadpool
+        out_dir = await run_in_threadpool(import_document, tmp_path, BOOKS_DIR, file.filename)
 
         # Get book info from the new DB
         folder = os.path.basename(out_dir)
@@ -128,7 +146,7 @@ async def upload_epub(file: UploadFile = File(...)):
             "chapters": len(book.spine) if book else 0,
         })
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"处理 {file_type} 失败: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"处理 {file_type} 失败: {str(e)}")
     finally:
         os.unlink(tmp_path)
 
@@ -148,6 +166,19 @@ async def delete_book(book_id: str):
         raise HTTPException(status_code=400, detail="置顶书不可删除")
 
     await cancel_book_runs(safe)
+    from agent.layer_runs import ACTIVE, CANCEL
+    pending = [task for key, task in list(ACTIVE.items()) if key[0] == safe]
+    for key, signal in list(CANCEL.items()):
+        if key[0] == safe:
+            signal.set()
+    from agent.chat import ACTIVE as CHAT_ACTIVE, SIGNALS
+    for key, signal in list(SIGNALS.items()):
+        if key[0] == safe:
+            signal.set()
+    pending.extend(task for key, task in list(CHAT_ACTIVE.items()) if key[0] == safe)
+    if pending:
+        import asyncio
+        await asyncio.gather(*pending, return_exceptions=True)
     try:
         clear_book_caches(safe)
         close_db(os.path.join(out_dir, "book.db"))   # 先释放句柄，否则 rmtree 删不掉 db 三件套
@@ -162,7 +193,10 @@ async def redirect_to_first_chapter(book_id: str):
     """【首页跳转】重定向到 /read/{book_id}/0。
     必须真重定向（而非直接渲染）：正文图片 src 是相对路径（images/...），
     若 URL 停在 /read/{book_id} 会解析成 /read/images/... 导致图片 404。"""
-    return RedirectResponse(url=f"/read/{urllib.parse.quote(book_id)}/0", status_code=302)
+    from reader.workspace import get_state
+    saved = await get_state(book_id)
+    ci, pi = saved.get('chapter_idx', 0), saved.get('paragraph_index', 0)
+    return RedirectResponse(url=f"/read/{urllib.parse.quote(book_id)}/{ci}#source={ci}:{pi}", status_code=302)
 
 
 @app.get("/favicon.ico")
@@ -213,22 +247,12 @@ async def notes_page(request: Request, book_id: str):
     if not book:
         raise HTTPException(status_code=404, detail="Book not found")
 
-    toc_pages = _get_toc_pages(book_id, book)
-    chapters = _build_chapters(toc_pages)
-    # 每逻辑章关联其起始页所在的 spine 文件（spine_order）作为章节层笔记键：
-    # 标题树逻辑章（阅读页 chapter_idx）与 spine 文件顺序可能不一致
-    # （TXT 转换的 EPUB 常把一章拆成多个碎片文件），读写都走同一映射保证一致。
-    chapter_list = []
-    for i, ch in enumerate(chapters):
-        sp = None
-        if 0 <= ch['start_page'] < len(toc_pages):
-            sp = toc_pages[ch['start_page']].get('spine_order')
-        chapter_list.append({"idx": i, "title": ch['title'], "spine_order": sp})
-
-    return templates.TemplateResponse(request, "notes.html", {
-        "book_id": book_id,
-        "book_title": book.metadata.title,
-        "chapters": chapter_list,
+    heading_toc = _get_heading_toc(book_id, book)
+    chapters, ch, content = _get_chapter_slice(book_id, book, 0)
+    return templates.TemplateResponse(request, "reader.html", {
+        "book": book, "book_id": book_id, "heading_toc": heading_toc,
+        "chapter_idx": 0, "chapter_title": ch['title'], "chapter_content": content,
+        "total_chapters": len(chapters), "anchor_map": {}, "note_mode": True,
     })
 
 # ── 整章 AJAX API GET /api/full_chapter/{book_id}/{chapter_idx} ──

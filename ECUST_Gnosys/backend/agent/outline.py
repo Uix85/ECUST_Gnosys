@@ -116,12 +116,13 @@ def headings_from_field(book_id: str, chapter_idx: int, paragraphs: list) -> lis
         return None
     if not isinstance(entries, list) or not entries:
         return None
-    by_text: dict[str, int] = {}
+    by_text: dict[str, list[int]] = {}
     for para in paragraphs:
         key = normalize_text(para["text"])
-        if key and key not in by_text:
-            by_text[key] = para["paragraph_index"]
+        if key:
+            by_text.setdefault(key, []).append(para["paragraph_index"])
     out = []
+    last_pi = -1
     for entry in entries:
         if not isinstance(entry, dict):
             continue
@@ -129,9 +130,10 @@ def headings_from_field(book_id: str, chapter_idx: int, paragraphs: list) -> lis
         level = entry.get("level")
         if not text or not isinstance(level, int):
             continue
-        pi = by_text.get(normalize_text(text))
+        pi = next((p for p in by_text.get(normalize_text(text), []) if p > last_pi), None)
         if pi is None:
             continue
+        last_pi = pi
         out.append({"level": max(0, level - 1), "title": text, "paragraph_index": pi})
     return out or None
 
@@ -147,7 +149,9 @@ def structure(book_id: str, chapter_idx: int, rules: tuple = DEFAULT_RULES) -> d
     """
     _chapter, paragraphs, _total = logical_paragraphs(book_id, chapter_idx)
     # ① 入库层级（epub 源）→ ② 文本行模式推断（txt 源）
-    headings = headings_from_field(book_id, chapter_idx, paragraphs) or []
+    headings = [{"level": int(p["tag"][1]) - 1, "title": p["text"].strip(), "paragraph_index": p["paragraph_index"]}
+                for p in paragraphs if re.fullmatch(r"h[1-6]", p.get("tag", ""))]
+    headings = headings or headings_from_field(book_id, chapter_idx, paragraphs) or []
     heading_index = {h["paragraph_index"] for h in headings}
     if not headings:
         for para in paragraphs:
@@ -194,12 +198,13 @@ def structure(book_id: str, chapter_idx: int, rules: tuple = DEFAULT_RULES) -> d
         for k, pi in enumerate(members, 1):
             meta[pi].update({"section": node["title"], "section_level": node["level"],
                              "pos": k, "size": len(members)})
-    by_title = {n["title"]: n for n in nodes}
     total_paras = len(paragraphs)
-    for pi in plain:
+    for ordinal, pi in enumerate(plain, 1):
         info = meta[pi]
+        info.setdefault("pos", ordinal)
+        info.setdefault("size", len(plain))
         # 只考虑包含本段的节点（本段 path 上的那几层），从深到浅
-        cands = [by_title[t] for t in info["path"] if t in by_title]
+        cands = [n for n in nodes if n["start"] <= pi < n["end"]]
         cands.sort(key=lambda n: -n["level"])
         chosen = next((n for n in cands if n["size"] >= MIN_CONTEXT_PARAGRAPHS), None)
         if chosen is None:                       # 各级都太小 → 取最浅的一层

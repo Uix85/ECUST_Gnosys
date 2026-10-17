@@ -4,7 +4,7 @@
 
 ## 当前应用：ECUST Gnosys
 
-`ECUST_Gnosys/` 是当前的本地 EPUB 阅读器项目，提供章节阅读、阅读笔记和段落级 AI 解释。
+`ECUST_Gnosys/` 是当前的本地 EPUB/TXT 阅读工作台，包含分层 Markdown 笔记、四层阅读 Agent、带原文定位的持久对话和完整 Markdown 渲染。
 
 ```bash
 cd ECUST_Gnosys

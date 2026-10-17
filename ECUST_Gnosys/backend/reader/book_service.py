@@ -688,7 +688,7 @@ def _headings_to_tree(headings: List[dict], use_levels: bool = True) -> List[TOC
 # ═══════════════════════════════════════════
 
 # 书库目录固定在仓库根的 books/（与 backend/ 同级）
-BOOKS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "books")
+BOOKS_DIR = os.environ.get("GNOSYS_BOOKS_DIR") or os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "books")
 
 _heading_toc_cache: Dict[str, List[TOCEntry]] = {}
 _book_cache: Dict[str, dict] = {}  # book_id → {Book object, db_path}
@@ -1019,6 +1019,8 @@ def _load_book_from_sqlite(folder_name: str) -> Optional[Book]:
     if folder_name in _book_cache:
         return _book_cache[folder_name]['book']
 
+    if os.path.basename(folder_name) != folder_name or not folder_name.endswith("_data"):
+        return None
     db_path = os.path.join(BOOKS_DIR, folder_name, "book.db")
     if not os.path.exists(db_path):
         return None

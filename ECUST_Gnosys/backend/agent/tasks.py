@@ -170,7 +170,7 @@ def generate_spec(
             "submit_result",
             "提交当前段落的三块语义解释。",
             result_parameters(),
-            lambda args: validate_candidate(args, sources),
+            lambda args: validate_candidate(args, _sources(ledger)),
             list(RESULT_FIELDS),
         ),
         skills=skills,

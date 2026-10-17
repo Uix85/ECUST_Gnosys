@@ -160,7 +160,7 @@ def gate(selection: str, paragraph: str, occurrences: int | None = None,
     s = _strip(selection or "")
     if not s:
         return Decision("reject", reason="not_text", message="没有选中文本")
-    if not re.search(r"[\u4e00-\u9fff]", s) or re.fullmatch(r"[\W\d_]+", s):
+    if not re.search(r"[^\W\d_]", s, re.UNICODE) or re.fullmatch(r"[\W\d_]+", s):
         return Decision("reject", reason="not_text", message="这不是文字，请选中一个术语")
     if _is_function_word_run(s):
         return Decision("reject", reason="not_a_term", message="这是一个常见虚词，不需要解释")

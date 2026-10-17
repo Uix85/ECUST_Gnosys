@@ -350,10 +350,13 @@ def get_db(db_path: str) -> sqlite3.Connection:
             os.makedirs(os.path.dirname(key), exist_ok=True)
             conn = sqlite3.connect(key, check_same_thread=False)
             conn.row_factory = sqlite3.Row
+            from db.workspace_schema import backup_before_upgrade, migrate
+            backup_before_upgrade(conn, key)
             conn.executescript(SCHEMA_SQL)
             _migrate_layer_tables(conn)   # 旧骨架库（层表字段不同）按当前定义重建
             _drop_unusable_tables(conn)   # 坐标系不对的旧表（concept_occurrences）
             _ensure_columns(conn)         # 后加的列（concept_sense.aliases_json）
             conn.commit()
+            migrate(conn)
             _connections[key] = conn
         return _connections[key]

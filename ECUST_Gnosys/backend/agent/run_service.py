@@ -131,6 +131,10 @@ class ParagraphRun:
                 "snapshot": json.loads(task["baseline_json"]),
             },
         }
+        from agent.outline import section_context
+        self.materials['chapter_structure'] = section_context(book_id, ci, pi)
+        for context_pi in self.materials['chapter_structure'].get('same_context_paragraphs', []):
+            self.ledger.setdefault((ci, context_pi), []).append(get_paragraph(book_id, ci, context_pi)['text'])
         self.spec, current_version = paragraph_task.spec_text(run["spec_type"])
         self.spec_version = run.get("spec_version") or current_version
         self.prompt = run.get("prompt_template") or paragraph_task.base_prompt(self.spec)
@@ -240,6 +244,10 @@ class ParagraphRun:
         else:
             state = status = "pending"
 
+        if state == 'published':
+            with self.db:
+                self.db.execute('UPDATE workspace_notes SET content=?,revision=revision+1,model=?,updated_at=? WHERE key=?',
+                                (candidate['detail'], self.config.model, _now(), f"L3:{task['chapter_idx']}:{task['paragraph_index']}"))
         note_id = _persist_note(
             self.db,
             task,
@@ -420,13 +428,15 @@ def prepare_run(
         baseline = current_baseline(db, ci, para)
         if mode == "fill_missing":
             note = baseline.get("agent")
-            if (note and note.get("state") in ("published", "accepted")) or baseline.get("legacy"):
+            if (note and note.get("state") in ("published", "accepted")) or baseline.get("legacy") or baseline.get("workspace"):
                 continue
         candidates.append((para, baseline))
     if not candidates:
         return ({"id": None, "existing": False, "estimated_count": 0,
                  "skipped_existing": len(refs), "status": "nothing_to_do"}, None)
     config = load_config()
+    if not config.api_key:
+        raise HTTPException(422, detail="请配置 AGENT_API_KEY")
     spec, spec_version = paragraph_task.spec_text(spec_type)
     prompt_template = request.get("prompt_template") or paragraph_task.base_prompt(spec)
     skill_snapshot = request.get("skill_snapshot")

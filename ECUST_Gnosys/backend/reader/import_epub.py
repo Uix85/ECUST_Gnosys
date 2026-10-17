@@ -8,6 +8,7 @@ Parses an EPUB file into a structured object that can be used to serve the book 
 """
 
 import os
+import re
 import sys
 from pathlib import Path
 import json
@@ -33,7 +34,7 @@ def clean_html_content(soup: BeautifulSoup) -> BeautifulSoup:
     """【HTML清理】移除 script/style/iframe/nav/form 等无关标签"""
 
     # Remove dangerous/useless tags
-    for tag in soup(['script', 'style', 'iframe', 'video', 'nav', 'form', 'button']):
+    for tag in soup(['script', 'style', 'iframe', 'video', 'nav', 'form', 'button', 'object', 'embed', 'svg', 'math', 'link', 'meta', 'base']):
         tag.decompose()
 
     # Remove HTML comments
@@ -44,6 +45,14 @@ def clean_html_content(soup: BeautifulSoup) -> BeautifulSoup:
     for tag in soup.find_all('input'):
         tag.decompose()
 
+    for tag in soup.find_all(True):
+        for attr in list(tag.attrs):
+            if attr.lower().startswith('on') or attr.lower() in ('style', 'srcdoc', 'srcset'):
+                del tag[attr]
+        for attr in ('href', 'src', 'xlink:href', 'action'):
+            value = re.sub(r'[\s\x00-\x20]+', '', str(tag.get(attr, '')))
+            if value and (re.match(r'^[a-zA-Z][a-zA-Z0-9+.-]*:', value) and not value.lower().startswith(('http:', 'https:', 'mailto:'))):
+                del tag[attr]
     return soup
 
 
@@ -279,7 +288,7 @@ def _split_paragraphs(html: str) -> list:
     return result
 
 
-def process_epub_to_sqlite(epub_path: str, books_dir: str = None) -> str:
+def _write_epub(epub_path: str, books_dir: str = None) -> str:
     """【EPUB处理入库】将 EPUB 解析后写入 SQLite 数据库，返回输出目录路径
     books_dir 缺省为仓库根 books/（不依赖当前工作目录）"""
     if books_dir is None:
@@ -400,18 +409,14 @@ def process_epub_to_sqlite(epub_path: str, books_dir: str = None) -> str:
     print(f"  Chapters: {db.execute('SELECT COUNT(*) FROM chapters WHERE book_id=?',(book_id,)).fetchone()[0]}")
     print(f"  Paragraphs: {total_paras}")
 
-    # 9.【章单位对齐】把段落归属对齐到“阅读器真正展示的章”（详见 chapter_units.py）。
-    # 转换器给的一个 chunk 里可能没有顶级标题（如序言被切成两段），入库时按 chunk 分章
-    # 会让该 chunk 的正文落到下一章；这里按统一 HTML 的章切片重新归属，防止复发。
-    # 失败不影响入库结果（只影响“按章取正文”的准确性）。
-    try:
-        from reader.chapter_units import align_paragraphs, format_report
-        rep = align_paragraphs(os.path.basename(out_dir), apply=True)
-        print(format_report(rep))
-    except Exception as e:
-        print(f"  [warn] 章单位对齐跳过：{e}")
-
     return out_dir
+
+def process_epub_to_sqlite(epub_path: str, books_dir: str = None) -> str:
+    from reader.import_document import import_document
+    if books_dir is None:
+        from reader.book_service import BOOKS_DIR
+        books_dir = BOOKS_DIR
+    return import_document(epub_path, books_dir)
 
 # --- CLI ---
 

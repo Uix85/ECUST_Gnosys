@@ -3,7 +3,7 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from agent.book import book_db, current_baseline, get_paragraph
@@ -20,6 +20,9 @@ router = APIRouter(prefix="/api/agent/{book_id}/runs", tags=["agent"])
 
 @router.post("")
 async def create_run(book_id: str, body: dict = Body(...)):
+    if body.get("layer", "L3") != "L3":
+        from agent.layer_runs import create
+        return create(book_id, body)
     return schedule_run(book_id, body)
 
 
@@ -27,7 +30,8 @@ async def create_run(book_id: str, body: dict = Body(...)):
 async def list_runs(book_id: str, limit: int = Query(50, ge=1, le=200)):
     db = book_db(book_id)
     ids = db.execute("SELECT id FROM agent_runs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
-    return {"items": [serialize_run(db, row["id"]) for row in ids]}
+    from agent.layer_runs import is_layer_run, serialize
+    return {"items": [(serialize if is_layer_run(db, row["id"]) else serialize_run)(db, row["id"]) for row in ids]}
 
 
 @router.get("/pending")
@@ -43,23 +47,29 @@ async def list_pending(book_id: str):
         "AND n2.paragraph_index=n.paragraph_index AND n2.fingerprint=n.fingerprint AND n2.state IN ('pending','conflict')) "
         "ORDER BY n.updated_at DESC"
     ).fetchall()
-    return {"items": [dict(r, sentences=json.loads(r["sentences"] or "[]"),
+    drafts = [dict(r, result=json.loads(r["result_json"]), target=json.loads(r["target_json"])) for r in db.execute("SELECT * FROM layer_drafts WHERE state IN ('pending','conflict') ORDER BY updated_at DESC")]
+    return {"drafts": drafts, "items": [dict(r, sentences=json.loads(r["sentences"] or "[]"),
                             review=json.loads(r["review_json"] or "{}")) for r in rows]}
 
 
 @router.get("/{run_id}")
 async def get_run(book_id: str, run_id: str):
-    return serialize_run(book_db(book_id), run_id)
+    from agent.layer_runs import is_layer_run, serialize
+    db = book_db(book_id)
+    return (serialize if is_layer_run(db, run_id) else serialize_run)(db, run_id)
 
 
 @router.get("/{run_id}/events")
-async def run_events(book_id: str, run_id: str, after: int = Query(0, ge=0)):
+async def run_events(book_id: str, run_id: str, request: Request, after: int = Query(0, ge=0)):
     db = book_db(book_id)
     if not db.execute("SELECT 1 FROM agent_runs WHERE id=?", (run_id,)).fetchone():
         raise HTTPException(status_code=404, detail="Run not found")
 
     async def stream():
-        cursor = after
+        try:
+            cursor = max(after, int(request.headers.get("last-event-id", "0")))
+        except ValueError:
+            cursor = after
         while True:
             rows = db.execute("SELECT * FROM agent_run_events WHERE run_id=? AND id>? ORDER BY id", (run_id, cursor)).fetchall()
             for row in rows:
@@ -79,6 +89,9 @@ async def run_events(book_id: str, run_id: str, after: int = Query(0, ge=0)):
 
 @router.post("/{run_id}/cancel")
 async def cancel_run(book_id: str, run_id: str):
+    from agent.layer_runs import is_layer_run, cancel
+    if is_layer_run(book_db(book_id), run_id):
+        return cancel(book_id, run_id)
     return request_cancel(book_id, run_id)
 
 
@@ -90,6 +103,9 @@ async def retry_run(book_id: str, run_id: str):
         raise HTTPException(status_code=404, detail="Run not found")
     if previous["status"] in ("queued", "running", "canceling"):
         raise HTTPException(status_code=409, detail="运行中的任务不能重试")
+    from agent.layer_runs import is_layer_run, create
+    if is_layer_run(db, run_id):
+        return create(book_id, json.loads(previous["request_json"]))
     failed = db.execute("SELECT * FROM agent_run_tasks WHERE run_id=? AND status!='published'", (run_id,)).fetchall()
     refs = [{"chapter_idx": r["chapter_idx"], "paragraph_index": r["paragraph_index"], "fingerprint": r["fingerprint"]} for r in failed]
     if not refs:
@@ -100,6 +116,9 @@ async def retry_run(book_id: str, run_id: str):
 
 @router.post("/{run_id}/adopt")
 async def adopt_pending(book_id: str, run_id: str, body: dict = Body(...)):
+    from agent.layer_runs import is_layer_run, adopt
+    if is_layer_run(book_db(book_id), run_id):
+        return adopt(book_id, run_id, body.get("draft_id"))
     task_id = body.get("task_id")
     if not isinstance(task_id, str):
         raise HTTPException(status_code=422, detail="task_id 必须是字符串")
@@ -121,6 +140,8 @@ async def adopt_pending(book_id: str, run_id: str, body: dict = Body(...)):
         db.execute("UPDATE agent_notes SET state='conflict',updated_at=? WHERE id=?", (_now(), note["id"]))
         db.commit()
         raise HTTPException(status_code=409, detail="原文或已有解释在任务运行期间发生变化；候选稿已保留")
+    db.execute('UPDATE workspace_notes SET content=?,revision=revision+1,model=?,updated_at=? WHERE key=?',
+               (note['detail'], note['model'], _now(), f"L3:{task['chapter_idx']}:{task['paragraph_index']}"))
     db.execute("UPDATE agent_notes SET state='published',updated_at=? WHERE id=?", (_now(), note["id"]))
     db.execute("UPDATE agent_run_tasks SET status='published',updated_at=? WHERE id=?", (_now(), task_id))
     remaining = db.execute("SELECT status FROM agent_run_tasks WHERE run_id=? AND id!=?", (run_id, task_id)).fetchall()

@@ -58,10 +58,8 @@ def needs_semantic(text: str) -> bool:
 
 
 def _book_db(book_id: str):
-    db_path = os.path.join(BOOKS_DIR, book_id, "book.db")
-    if not os.path.exists(db_path):
-        raise HTTPException(status_code=404, detail="Book not found")
-    return get_db(db_path)
+    from agent.book import book_db
+    return book_db(book_id)
 
 
 @router.get("/book/{book_id}")
@@ -113,10 +111,8 @@ async def get_concept(book_id: str, term: str = ""):
         if row:
             return {"term": row["term"], "content": row["content"], "matched": True,
                     "source_text": row["source_text"] or "", "anchor_text": row["anchor_text"] or ""}
-    row = _first_row(db, "concept_layer", "term, content")
-    if not row:
-        return {"term": "", "content": "", "matched": False}
-    return {"term": row["term"], "content": row["content"], "matched": False}
+    return {"term": term, "content": "", "matched": False}
+
 
 
 @router.get("/semantic/{book_id}")
@@ -130,10 +126,8 @@ async def get_semantic(book_id: str, text: str = ""):
         if row:
             return {"text_hash": h, "content": row["content"], "matched": True,
                     "source_text": row["source_text"] or "", "anchor_text": row["anchor_text"] or ""}
-    row = _first_row(db, "semantic_layer", "content")
-    if not row:
-        return {"text_hash": "", "content": "", "matched": False}
-    return {"text_hash": "", "content": row["content"], "matched": False}
+    return {"text_hash": "", "content": "", "matched": False}
+
 
 
 # ═══════════════════════════════════════════════════════════
@@ -196,9 +190,8 @@ async def save_semantic(book_id: str, text: str = Body(...), content: str = Body
     invalidate_generated_notes(db, source_text or text)
     bid = _book_int_id(db)
     # 记忆功能：content 缺省时统一填充全书层文本（占位，后续 AI 生成替换）
-    if not content:
-        _brow = db.execute("SELECT content FROM book_layer WHERE book_id = ?", (bid,)).fetchone()
-        content = (_brow["content"] if _brow else None) or ""
+    if not content.strip():
+        raise HTTPException(status_code=422, detail="请先生成或填写解释，不写入占位内容")
     h = _text_hash(text)
     src = source_text or text
     anc = anchor_text or ""
@@ -240,9 +233,8 @@ async def save_concept(book_id: str, term: str = Body(...), content: str = Body(
     })
     bid = _book_int_id(db)
     # 记忆功能：content 缺省时统一填充全书层文本（占位，后续 AI 生成替换）
-    if not content:
-        _brow = db.execute("SELECT content FROM book_layer WHERE book_id = ?", (bid,)).fetchone()
-        content = (_brow["content"] if _brow else None) or ""
+    if not content.strip():
+        raise HTTPException(status_code=422, detail="请先生成或填写解释，不写入占位内容")
     t = (term or "").strip()
     src = source_text or t
     anc = anchor_text or ""
