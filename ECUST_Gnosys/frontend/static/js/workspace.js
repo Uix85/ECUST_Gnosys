@@ -211,12 +211,50 @@ async function loadSession() {
     if(active) streamAnswer(active.id,active.event_cursor || 0); else setChatActive(false);
 }
 function setChatActive(active) { $('stop-chat').hidden=!active; $('send-chat').disabled=active; if(!active){state.activeMessage='';$('chat-status').textContent='';} }
+function traceArgs(args) {
+    if(!args||typeof args!=='object')return '';
+    return Object.entries(args).map(([key,value])=>{let text=typeof value==='string'?value:JSON.stringify(value);if(text===undefined||text===null)text='';text=String(text).replace(/\s+/g,' ').trim();if(text.length>90)text=text.slice(0,87)+'…';return key+'='+text;}).filter(item=>!item.endsWith('=')).join(', ');
+}
+function traceToolRow(tool) {
+    const item=el('li','chat-trace-tool '+(tool.status||'running'));if(tool.id!==undefined&&tool.id!==null)item.dataset.toolId=String(tool.id);
+    item.append(el('span','chat-trace-tool-name',tool.tool||'工具'));
+    const args=traceArgs(tool.args);if(args)item.append(el('span','chat-trace-tool-args',args));
+    item.append(el('span','chat-trace-tool-status',{running:'进行中',ok:'完成',error:'失败',blocked:'已拦截'}[tool.status]||''));
+    if(tool.error)item.append(el('span','chat-trace-tool-error',tool.error));
+    return item;
+}
+function traceLabel(details) {
+    const hasReasoning=!!details.querySelector('.chat-trace-reasoning')?.textContent.trim(),count=details.querySelectorAll('.chat-trace-tool').length;
+    if(hasReasoning&&count)return `思考过程与工具调用（${count} 次）`;
+    if(hasReasoning)return '思考过程';if(count)return `工具调用（${count} 次）`;return '执行过程';
+}
+function refreshTraceLabel(details) { const summary=details.querySelector('summary');if(summary)summary.textContent=traceLabel(details); }
+function traceBox(trace,open) {
+    const details=el('details','chat-trace');details.open=!!open;details.append(el('summary','chat-trace-summary'));
+    const body=el('div','chat-trace-body');
+    if(trace?.reasoning){const pre=el('pre','chat-trace-reasoning');pre.textContent=trace.reasoning;body.append(pre);}
+    const list=el('ol','chat-trace-tools');(trace?.tools||[]).forEach(tool=>list.append(traceToolRow(tool)));if(list.children.length)body.append(list);
+    details.append(body);refreshTraceLabel(details);return details;
+}
+function ensureTrace(messageId,open=true) {
+    const row=$('message-'+messageId);if(!row)return null;let details=row.querySelector('.chat-trace');
+    if(!details){details=traceBox({reasoning:'',tools:[]},open);row.insertBefore(details,row.querySelector('.message-content'));}
+    if(open)details.open=true;return details;
+}
+function ensureTraceReasoning(details) {
+    let pre=details.querySelector('.chat-trace-reasoning');if(!pre){pre=el('pre','chat-trace-reasoning');const body=details.querySelector('.chat-trace-body');body.insertBefore(pre,body.querySelector('.chat-trace-tools'));}return pre;
+}
+function ensureTraceTools(details) {
+    let list=details.querySelector('.chat-trace-tools');if(!list){list=el('ol','chat-trace-tools');details.querySelector('.chat-trace-body').append(list);}return list;
+}
+function keepChatBottom() { const box=$('messages');if(box.scrollHeight-box.scrollTop-box.clientHeight<200)box.scrollTop=box.scrollHeight; }
 function renderMessages() {
     const box=$('messages'); box.replaceChildren();
     if(!state.messages.length) { const empty=el('div','empty-state'); empty.append(el('span','empty-mark','G'),el('h2','','从原文开始思考'),el('p','','划选原文，或用 @ 引用章、节、子节。对话随书保存。'));box.append(empty); }
     for(const m of state.messages) {
         const row=el('section','message '+m.role); row.id='message-'+m.id;
         row.append(el('div','message-role',m.role==='user'?'读者':'Gnosys Agent · '+m.status));
+        if(m.role==='assistant'&&m.trace&&(m.trace.reasoning||(m.trace.tools||[]).length))row.append(traceBox(m.trace,['queued','running'].includes(m.status)));
         const content=mdBox(m.content);content.classList.add('message-content');row.append(content);
         const refs=el('div','reference-chips');(m.references||[]).forEach(ref=>refs.append(refChip(ref)));row.append(refs);
         if(m.error)row.append(el('p','message-error',m.error));
@@ -233,9 +271,11 @@ function streamAnswer(id, cursor=0) {
     const sid=state.session;chatStream=new EventSource(chatBase+'/sessions/'+sid+'/messages/'+id+'/events?after='+cursor);
     chatStream.addEventListener('update',e=>{
         if(sid!==state.session)return;const x=JSON.parse(e.data),m=state.messages.find(m=>m.id===id);
-        if(x.kind==='delta'&&m){m.content+=x.data.text;const content=$('message-'+id)?.querySelector('.message-content');if(content)content.innerHTML=renderMarkdown(m.content);const box=$('messages');if(box.scrollHeight-box.scrollTop-box.clientHeight<200)box.scrollTop=box.scrollHeight;}
+        if(x.kind==='delta'&&m){m.content+=x.data.text;const content=$('message-'+id)?.querySelector('.message-content');if(content)content.innerHTML=renderMarkdown(m.content);keepChatBottom();}
+        if(x.kind==='reasoning'&&m){const details=ensureTrace(id,true);if(details){ensureTraceReasoning(details).append(document.createTextNode(x.data.text||''));refreshTraceLabel(details);keepChatBottom();}}
+        if(x.kind==='tool'&&m){const details=ensureTrace(id,true);if(details){const list=ensureTraceTools(details),row=traceToolRow(x.data),old=[...list.children].find(n=>n.dataset.toolId===String(x.data.id));if(old)old.replaceWith(row);else list.append(row);refreshTraceLabel(details);keepChatBottom();}}
         if(x.kind==='status')$('chat-status').textContent=x.data.message+(x.data.tool?' · '+x.data.tool:'');
-        if(x.kind==='completed')setChatActive(false);
+        if(x.kind==='completed'){const details=$('message-'+id)?.querySelector('.chat-trace');if(details)details.open=false;setChatActive(false);}
     });
     chatStream.addEventListener('end',()=>{chatStream.close();setChatActive(false);loadSession().catch(e=>toast(e.message));});
     chatStream.onerror=()=>{$('chat-status').textContent='连接中断，正在重接；回答会继续保存在本机';};

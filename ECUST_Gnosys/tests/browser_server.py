@@ -16,7 +16,7 @@ source.write_text('第一章 社会关系\n第一节 实践\n一、观察\n'+SOU
 folder=import_document(source,os.environ['GNOSYS_BOOKS_DIR']);fake_model.BOOK_ID=Path(folder).name
 from server import app
 from agent import layer_runs,run_service,chat
-model=ReadingModel(delay=.015)
+model=ReadingModel(delay=float(os.environ.get('GNOSYS_QA_DELAY','.015')))
 layer_runs.build_model=lambda _:model
 run_service.build_model=lambda _:model
 chat.build_model=lambda _:model

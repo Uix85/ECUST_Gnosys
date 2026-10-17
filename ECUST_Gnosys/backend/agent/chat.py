@@ -38,6 +38,46 @@ def event(db, message_id, kind, data):
         db.execute('INSERT INTO chat_events(message_id,kind,data_json) VALUES(?,?,?)', (message_id, kind, dumps(data)))
 
 
+def _message_trace(db, message_id):
+    """把思考/工具事件还原成已完成的执行轨迹；旧消息没有这些事件时返回空轨迹。"""
+    reasoning, tools, by_id = [], [], {}
+    rows = db.execute(
+        'SELECT kind,data_json FROM chat_events WHERE message_id=? ORDER BY id', (message_id,)
+    ).fetchall()
+    for row in rows:
+        if row['kind'] not in ('reasoning', 'tool'):
+            continue
+        try:
+            data = json.loads(row['data_json'])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        if row['kind'] == 'reasoning':
+            text = data.get('text')
+            if isinstance(text, str) and text:
+                reasoning.append(text)
+            continue
+        tid = data.get('id')
+        item = by_id.get(tid)
+        if item is None:
+            item = {'id': tid, 'tool': data.get('tool') or '',
+                    'args': data.get('args') or {}, 'status': data.get('status') or 'running'}
+            if tid is not None:
+                by_id[tid] = item
+            tools.append(item)
+        else:
+            if data.get('tool'):
+                item['tool'] = data['tool']
+            if 'args' in data:
+                item['args'] = data.get('args') or {}
+            if data.get('status'):
+                item['status'] = data['status']
+        if data.get('error'):
+            item['error'] = data['error']
+    return {'reasoning': ''.join(reasoning), 'tools': tools}
+
+
 def message_item(book_id, row):
     item = dict(row)
     refs = json.loads(item.pop('references_json'))
@@ -47,8 +87,11 @@ def message_item(book_id, row):
             ref['valid'] = True
         except HTTPException:
             ref['valid'] = False
-    item['event_cursor'] = book_db(book_id).execute('SELECT COALESCE(MAX(id),0) FROM chat_events WHERE message_id=?', (item['id'],)).fetchone()[0]
+    db = book_db(book_id)
+    item['event_cursor'] = db.execute('SELECT COALESCE(MAX(id),0) FROM chat_events WHERE message_id=?', (item['id'],)).fetchone()[0]
     item['references'] = refs
+    if item.get('role') == 'assistant':
+        item['trace'] = _message_trace(db, item['id'])
     return item
 
 
@@ -276,15 +319,34 @@ async def answer(book_id, session_id, message_id, content, refs, signal):
         async def get_outline(_args):
             return outline_nodes(book_id)
         tools.append(ToolSpec('read_directory', '读取有唯一编号和完整路径的多级目录。', {}, get_outline))
-        sdk_tools = []
+        sdk_tools, tool_seq = [], 0
         for tool in tools:
             async def invoke(_ctx, raw, spec=tool):
-                if hooks.exhausted:
-                    return dumps({'ok': False, 'error': '工具调用次数已达上限，不要再调用工具；请立即基于已读取的原文直接回答，材料不足的部分明确说明。'})
+                nonlocal tool_seq
+                tool_seq += 1
+                tid = tool_seq
                 try:
-                    return dumps(await spec.handler(json.loads(raw or '{}')))
+                    args = json.loads(raw or '{}')
+                except json.JSONDecodeError as exc:
+                    msg = f'参数不是合法 JSON（{len(raw or "")} 字符）：{exc}'
+                    event(db, message_id, 'tool', {'id': tid, 'tool': spec.name, 'args': {}, 'status': 'error', 'error': msg})
+                    return dumps({'error': msg})
+                if not isinstance(args, dict):
+                    args = {}
+                if hooks.exhausted:
+                    event(db, message_id, 'tool', {'id': tid, 'tool': spec.name, 'args': args, 'status': 'blocked', 'error': '工具预算已用完'})
+                    return dumps({'ok': False, 'error': '工具调用次数已达上限，不要再调用工具；请立即基于已读取的原文直接回答，材料不足的部分明确说明。'})
+                event(db, message_id, 'tool', {'id': tid, 'tool': spec.name, 'args': args, 'status': 'running'})
+                try:
+                    result = await spec.handler(args)
                 except (ValueError, HTTPException, TypeError) as exc:
+                    event(db, message_id, 'tool', {'id': tid, 'tool': spec.name, 'args': args, 'status': 'error', 'error': str(exc)})
                     return dumps({'error': str(exc)})
+                except Exception as exc:
+                    event(db, message_id, 'tool', {'id': tid, 'tool': spec.name, 'args': args, 'status': 'error', 'error': f'{type(exc).__name__}: {exc}'})
+                    raise
+                event(db, message_id, 'tool', {'id': tid, 'tool': spec.name, 'args': args, 'status': 'ok'})
+                return dumps(result)
             sdk_tools.append(FunctionTool(name=tool.name, description=tool.description,
                                           params_json_schema={'type': 'object', 'properties': tool.parameters, 'required': tool.required, 'additionalProperties': False},
                                           on_invoke_tool=invoke, strict_json_schema=False))
@@ -312,11 +374,18 @@ async def answer(book_id, session_id, message_id, content, refs, signal):
         async def consume():
             nonlocal text, sources
             async for e in result.stream_events():
-                if e.type == 'raw_response_event' and getattr(e.data, 'type', '') == 'response.output_text.delta':
+                if e.type != 'raw_response_event':
+                    continue
+                kind = getattr(e.data, 'type', '')
+                if kind == 'response.output_text.delta':
                     text += e.data.delta
                     with db:
                         db.execute('UPDATE chat_messages SET content=? WHERE id=?', (text, message_id))
                     event(db, message_id, 'delta', {'text': e.data.delta})
+                elif kind in ('response.reasoning_summary_text.delta', 'response.reasoning_text.delta'):
+                    delta = getattr(e.data, 'delta', '')
+                    if delta:
+                        event(db, message_id, 'reasoning', {'text': delta})
             if not text and isinstance(result.final_output, str):
                 text = result.final_output
             sources = [{'chapter_idx': ci, 'paragraph_index': pi, 'fingerprint': get_paragraph(book_id, ci, pi)['fingerprint'],

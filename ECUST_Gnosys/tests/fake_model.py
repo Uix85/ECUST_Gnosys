@@ -5,7 +5,7 @@ import uuid
 from agents.models.interface import Model
 from agents.items import ModelResponse
 from agents.usage import Usage
-from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage, ResponseOutputText, ResponseTextDeltaEvent, ResponseCompletedEvent, Response
+from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage, ResponseOutputText, ResponseTextDeltaEvent, ResponseReasoningSummaryTextDeltaEvent, ResponseCompletedEvent, Response
 
 
 def call(name, args):
@@ -81,9 +81,15 @@ class ReadingModel(Model):
             raise RuntimeError('offline streaming failure')
         # First streamed turn invokes an actual directory tool, subsequent turn emits text.
         if not any(isinstance(x,dict) and x.get('type')=='function_call_output' for x in input):
+            yield ResponseReasoningSummaryTextDeltaEvent(
+                type='response.reasoning_summary_text.delta',
+                delta='先核对章节范围和原文位置。',
+                item_id='rs_test', output_index=0, summary_index=0,
+                sequence_number=0,
+            )
             output=[call('read_directory_node',{'node_id':'c0','offset':0})]
             response=Response.model_construct(id='resp_'+uuid.uuid4().hex, output=output, usage=None)
-            yield ResponseCompletedEvent(type='response.completed',response=response,sequence_number=0)
+            yield ResponseCompletedEvent(type='response.completed',response=response,sequence_number=1)
             return
         text='## 阅读分析\n\n社会关系与实践有关。见[原文](#source=0:3)。\n\n| 概念 | 说明 |\n| --- | --- |\n| 关系 | 联系 |\n\n- [x] 已读原文\n  - 子项\n\n```python\nx = 1\n```\n\n公式：$x^2 + y^2$。'
         for i in range(0,len(text),13):

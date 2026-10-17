@@ -173,6 +173,9 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         duplicate=await self.send(sid,refs=refs);self.assertEqual(duplicate.json()['message_id'],mid)
         data=await self.wait_chat(sid);self.assertEqual(data['messages'][-1]['status'],'completed',data)
         self.assertIn('公式',data['messages'][-1]['content']);self.assertTrue(data['messages'][-1]['references'])
+        assistant=next(m for m in data['messages'] if m['id']==mid)
+        self.assertIn('先核对章节范围',assistant['trace']['reasoning'])
+        self.assertTrue(any(t['tool']=='read_directory_node' and t['status']=='ok' for t in assistant['trace']['tools']))
         stream=await self.client.get(self.chat+f'/sessions/{sid}/messages/{mid}/events');self.assertIn('delta',stream.text);self.assertIn('read_directory_node',stream.text)
         cursor=data['messages'][-1]['event_cursor'];resume=await self.client.get(self.chat+f'/sessions/{sid}/messages/{mid}/events',headers={'Last-Event-ID':str(cursor)});self.assertNotIn('event: update',resume.text)
         r=await self.send(sid,'继续比较',req='request-2');self.assertEqual(r.status_code,200,r.text);await self.wait_chat(sid)
@@ -212,6 +215,8 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
                 self.fail('chat timeout')
         self.assertEqual(msg['status'], 'completed', data)
         self.assertIn('阅读分析', msg['content'])
+        self.assertTrue(msg['trace']['tools'])
+        self.assertEqual(msg['trace']['tools'][0]['status'], 'blocked')
         events = (await self.client.get(self.chat + f'/sessions/{sid}/messages/{mid}/events')).text
         self.assertIn('工具预算已用完', events)
 
