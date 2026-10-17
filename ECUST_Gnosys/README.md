@@ -56,6 +56,7 @@ ego-browser nodejs < tests/browser_e2e.mjs
 
 ```bash
 uv run python backend/agent/outline.py            # L3 结构层纯函数自检
+uv run python backend/agent/config.py             # 设置页的校验/落盘/密钥脱敏自检
 uv run python backend/agent/selection.py          # L4 划词拦截自检
 uv run python backend/reader/locator.py           # 定位层纯函数自检（标题树与段落归属）
 uv run python tests/test_chapter_layer.py         # L2 章节层单测（validator / 渲染 / 定位树）
@@ -78,13 +79,15 @@ uv run python tools/structure/run_chapter_layer.py --book <书> --chapter 2 --ap
 
 ## AI 配置
 
-阅读器本身可以先启动；使用 Agent 前，需要配置兼容 OpenAI Chat Completions 工具调用的模型服务。将 `.env.example` 复制为 `.env`，按需修改模型和服务地址，再在项目根目录创建 `.env.secrets`：
+阅读器本身可以先启动；使用 Agent 前，需要配置兼容 OpenAI Chat Completions 工具调用的模型服务。最简单的方式是打开 <http://127.0.0.1:8123/settings>（书库与阅读页右上角也有「设置」）：填写服务地址、模型名和 API 密钥后保存，写入项目根目录的 `.env`（密钥写 `.env.secrets`），下一次 Agent 调用即生效，无需重启。
+
+也可以手动配置：将 `.env.example` 复制为 `.env`，按需修改模型和服务地址，再在项目根目录创建 `.env.secrets`：
 
 ```dotenv
 AGENT_API_KEY=你的_API_密钥
 ```
 
-`.env.secrets` 已加入 Git 忽略规则。配置读取优先级为：进程环境变量、`.env.secrets`、`.env`。`.env.example` 中可调整的选项包括：
+`.env.secrets` 已加入 Git 忽略规则。配置读取优先级为：进程环境变量、`.env.secrets`、`.env`。被进程环境变量覆盖的键，设置页会明确提示「改文件不生效」。`.env.example` 中可调整的选项包括：
 
 | 变量 | 用途 |
 | --- | --- |

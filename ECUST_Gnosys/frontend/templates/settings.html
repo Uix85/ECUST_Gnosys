@@ -1,0 +1,98 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>设置 · Gnosys</title><link rel="stylesheet" href="/static/css/workspace.css">
+<style>
+.settings-shell{max-width:780px;margin:0 auto;padding:28px 24px 60px}
+.settings-card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-top:16px}
+.settings-card h2{margin:0 0 4px;font-size:15px}
+.settings-card p.hint{margin:0 0 14px;font-size:12px;color:var(--muted)}
+.settings-row{display:grid;grid-template-columns:minmax(0,220px) minmax(0,1fr);gap:6px 16px;align-items:center;padding:7px 0;border-top:1px solid var(--line)}
+.settings-row:first-of-type{border-top:0}
+.settings-row label{font-size:13px}
+.settings-row .meta{grid-column:1;font-size:11px;color:var(--muted)}
+.settings-row input[type=text],.settings-row input[type=password],.settings-row input[type=number]{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;font-size:13px}
+.settings-row.checkbox{grid-template-columns:minmax(0,1fr) auto}
+.settings-foot{display:flex;align-items:center;gap:12px;margin-top:16px;flex-wrap:wrap}
+.settings-foot .muted{font-size:12px}
+.settings-warn{margin-top:12px;font-size:12px;color:#b45309}
+.settings-ok{color:#15803d}
+</style></head>
+<body class="library-page">
+<header class="appbar"><a class="brand" href="/"><span class="brand-mark">G</span><span>Gnosys</span></a><span class="bar-divider"></span><span class="muted">Agent 配置</span></header>
+<main class="settings-shell">
+ <div class="library-top"><div><div class="eyebrow">SETTINGS</div><h1>设置</h1><p>改完即存到项目根目录的 <code>.env</code>（密钥写 <code>.env.secrets</code>），下一次 Agent 调用生效，无需重启。</p></div></div>
+ <div id="status-line" class="muted" role="status"></div>
+ <form id="settings-form"></form>
+ <div class="settings-foot"><button class="primary" id="save" type="submit" form="settings-form">保存</button><button id="reload" type="button">重新读取</button><span class="muted" id="saved-at"></span></div>
+ <div id="warn" class="settings-warn" hidden></div>
+ <p class="muted" id="paths" style="margin-top:22px;font-size:12px"></p>
+</main>
+<script>
+const form=document.getElementById('settings-form'),statusLine=document.getElementById('status-line'),
+      savedAt=document.getElementById('saved-at'),warn=document.getElementById('warn'),paths=document.getElementById('paths');
+const GROUPS=[['连接',['AGENT_API_BASE_URL','AGENT_MODEL','AGENT_API_KEY','AGENT_SESSION_ID']],
+              ['预算与超时',['AGENT_REQUEST_TIMEOUT','AGENT_MAX_REQUESTS','AGENT_MAX_TOOL_CALLS','AGENT_RUN_TIMEOUT','AGENT_MAX_RETRIES','AGENT_MAX_PARALLEL']],
+              ['行为',['AGENT_DISABLE_THINKING']]];
+const SOURCE={env:'来自进程环境变量（优先级最高，改文件不生效）',secrets:'来自 .env.secrets',dotenv:'来自 .env',default:'默认值'};
+let fields=[];
+function row(f){
+  const wrap=document.createElement('div');
+  if(f.kind==='bool'){
+    wrap.className='settings-row checkbox';
+    const lab=document.createElement('label');lab.htmlFor='f-'+f.key;lab.textContent=f.label;
+    const box=document.createElement('input');box.type='checkbox';box.id='f-'+f.key;box.checked=f.value==='1';
+    wrap.append(lab,box);
+    if(f.help){const meta=document.createElement('div');meta.className='meta';meta.textContent=f.help;wrap.append(meta);}
+    return wrap;
+  }
+  const lab=document.createElement('label');lab.htmlFor='f-'+f.key;lab.textContent=f.label;
+  const input=document.createElement('input');
+  input.id='f-'+f.key;
+  input.type=f.kind==='secret'?'password':(f.kind==='int'||f.kind==='float'?'number':'text');
+  if(f.kind==='int')input.step='1';
+  if(f.kind==='float')input.step='any';
+  input.value=f.kind==='secret'?'':(f.value??'');
+  if(f.kind==='secret')input.placeholder=f.hint||'未设置';
+  const meta=document.createElement('div');meta.className='meta';
+  meta.textContent=[f.help,SOURCE[f.source]].filter(Boolean).join(' · ');
+  wrap.append(lab,input,meta);
+  return wrap;
+}
+function render(data){
+  fields=data.items;form.replaceChildren();
+  for(const [title,keys] of GROUPS){
+    const card=document.createElement('section');card.className='settings-card';
+    const h=document.createElement('h2');h.textContent=title;card.append(h);
+    const p=document.createElement('p');p.className='hint';
+    p.textContent=title==='连接'?'模型服务地址与凭据。密钥留空表示不修改，不会回显。':'单个 Agent 任务的预算；章节层等长任务可用环境变量单独放宽。';
+    card.append(p);
+    for(const key of keys){const f=fields.find(x=>x.key===key);if(f)card.append(row(f));}
+    form.append(card);
+  }
+  statusLine.textContent=data.ready?`已配置：${data.model} @ ${data.base_url}`:'尚未配置 API 密钥，Agent 功能不可用';
+  statusLine.className=data.ready?'settings-ok':'';
+  paths.textContent=`配置文件：${data.root}\\${data.files.env} 与 ${data.root}\\${data.files.secrets}`;
+  warn.hidden=!data.overridden.length;
+  warn.textContent=data.overridden.length?`这些键被进程环境变量覆盖，改文件不会生效：${data.overridden.join('、')}`:'';
+}
+async function load(){
+  const r=await fetch('/api/settings');if(!r.ok)throw new Error(await r.text());render(await r.json());
+}
+form.addEventListener('submit',async e=>{
+  e.preventDefault();const values={};
+  for(const f of fields){
+    const el=document.getElementById('f-'+f.key);if(!el)continue;
+    if(f.kind==='bool')values[f.key]=el.checked?'1':'0';
+    else if(f.kind==='secret'){if(el.value.trim())values[f.key]=el.value.trim();}
+    else values[f.key]=el.value;
+  }
+  document.getElementById('save').disabled=true;
+  try{
+    const r=await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values})});
+    const data=await r.json();
+    if(!r.ok)throw new Error(data.detail||'保存失败');
+    render(data);savedAt.textContent='已保存 '+new Date().toLocaleTimeString();
+  }catch(err){statusLine.className='';statusLine.textContent='保存失败：'+err.message;}
+  finally{document.getElementById('save').disabled=false;}
+});
+document.getElementById('reload').onclick=()=>load().catch(e=>statusLine.textContent=e.message);
+load().catch(e=>statusLine.textContent='读取设置失败：'+e.message);
+</script></body></html>

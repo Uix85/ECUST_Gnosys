@@ -9,7 +9,7 @@ import shutil
 import tempfile
 import urllib.parse
 
-from fastapi import FastAPI, Request, HTTPException, File, UploadFile
+from fastapi import FastAPI, Request, HTTPException, File, UploadFile, Body
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -103,6 +103,28 @@ async def library_view(request: Request):
     books.sort(key=lambda b: (0, PINNED_BOOK_IDS.index(b["id"])) if b["id"] in PINNED_BOOK_IDS else (1, 0))
 
     return templates.TemplateResponse(request, "library.html", {"books": books})
+
+
+# ── 设置页：直接改项目根目录的 .env / .env.secrets ──
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_view(request: Request):
+    return templates.TemplateResponse(request, "settings.html", {})
+
+
+@app.get("/api/settings")
+async def read_settings():
+    from agent.config import settings_snapshot
+    return settings_snapshot()
+
+
+@app.put("/api/settings")
+async def update_settings(body: dict = Body(...)):
+    from agent.config import save_settings
+    try:
+        # 不缓存：保存后下一次 load_config() 立刻生效（进程环境变量仍优先）
+        return save_settings(body.get("values", {}))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
 
 # ── 上传处理 POST /upload ──
 @app.post("/upload")
