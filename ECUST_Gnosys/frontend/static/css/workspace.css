@@ -48,3 +48,22 @@ body{height:100dvh;overflow:hidden}.library-page{height:auto;min-height:100dvh;o
 .bookmark-row{display:flex;flex-wrap:wrap;gap:4px;align-items:flex-start}
 .bookmark-row button:first-child{flex:1 1 140px;min-width:0;overflow-wrap:anywhere}
 .bookmark-row button:last-child{flex:none}
+:root{--appbar-height:64px}
+.appbar{height:var(--appbar-height)}
+.workspace{height:calc(100dvh - var(--appbar-height))}
+.appbar-left,.appbar-right{display:flex;align-items:center;gap:8px}
+.appbar-right{margin-left:auto}
+.reader-page .appbar{padding:0 16px}
+.icon-button{display:inline-grid;place-items:center;width:34px;height:34px;padding:0;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink);text-decoration:none;flex:none}
+.icon-button svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.icon-button:hover{background:var(--blue-soft);border-color:#b5c9eb;color:var(--blue);text-decoration:none}
+@media(orientation:portrait){
+ .reader-page{--appbar-height:96px}
+ .reader-page .appbar{display:block;position:relative;padding:0}
+ .reader-page .appbar-left,.reader-page .appbar-right{display:block;margin:0}
+ .reader-page #back-library{position:fixed;top:12px;left:14px;z-index:45}
+ .reader-page #toggle-nav{position:fixed;top:12px;right:14px;z-index:45}
+ .reader-page #toggle-panel{position:fixed;top:54px;right:14px;z-index:45}
+ .reader-page #open-settings{position:fixed;left:14px;bottom:14px;z-index:45;box-shadow:0 3px 14px #182f4b2e}
+}
+@media(max-width:800px){.reader-page .navigation,.reader-page .inspector{top:var(--appbar-height)}}
