@@ -42,7 +42,7 @@ function nodeButton(node) {
 async function nav(name) {
     state.nav = name; $('search-form').hidden = name !== 'search';
     document.querySelectorAll('[data-nav]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.nav === name)));
-    $('nav-results').replaceChildren(); $('nav-caption').textContent = {outline:'阅读目录',search:'全文搜索',bookmarks:'我的书签'}[name];
+    $('nav-results').replaceChildren();
     if (name === 'outline') state.nodes.forEach(n => $('nav-results').append(nodeButton(n)));
     if (name === 'search') $('search-input').focus();
     if (name === 'bookmarks') {
