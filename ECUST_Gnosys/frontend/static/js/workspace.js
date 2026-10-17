@@ -303,12 +303,13 @@ function captureSelection() {
     state.selected=refs;const rect=range.getBoundingClientRect(),box=$('selection-actions');box.hidden=false;box.style.top=Math.min(window.innerHeight-50,Math.max(70,rect.bottom+8))+'px';box.style.left=Math.min(window.innerWidth-300,Math.max(8,rect.left))+'px';
 }
 const SIDEBARS = {
-    nav: {panel:'navigation',handle:'nav-resize',css:'--nav-width',min:170,store:'gnosys-navigation-width',cls:'no-navigation',toggle:'toggle-nav'},
-    inspector: {panel:'inspector',handle:'panel-resize',css:'--panel-width',min:240,store:'gnosys-inspector-width',cls:'no-inspector',toggle:'toggle-panel'}
+    nav: {panel:'navigation',handle:'nav-resize',css:'--nav-width',store:'gnosys-navigation-width',cls:'no-navigation',toggle:'toggle-nav'},
+    inspector: {panel:'inspector',handle:'panel-resize',css:'--panel-width',store:'gnosys-inspector-width',cls:'no-inspector',toggle:'toggle-panel'}
 };
 const READING_MIN_WIDTH = 320;
 const sidebarWidths = {nav:0, inspector:0};
 function pageWidth() { return document.documentElement.clientWidth || window.innerWidth; }
+function sidebarMinWidth() { return Math.max(1,Math.ceil(pageWidth()/20)); }
 function sidebarMaxWidth() {
     const page=pageWidth();
     // 硬上限：页宽 1/3；同时给中间阅读区留出最小宽度，避免三栏挤爆。
@@ -316,19 +317,19 @@ function sidebarMaxWidth() {
 }
 function applySidebarWidth(kind,width,persist) {
     const cfg=SIDEBARS[kind],panel=$(cfg.panel);if(!panel)return 0;
-    const max=sidebarMaxWidth();if(max<=cfg.min)return 0;
-    const value=Math.max(cfg.min,Math.min(max,Math.round(width)));
+    const min=sidebarMinWidth(),max=sidebarMaxWidth();if(max<=min)return 0;
+    const value=Math.max(min,Math.min(max,Math.round(width)));
     document.documentElement.style.setProperty(cfg.css,value+'px');sidebarWidths[kind]=value;
     const handle=$(cfg.handle);
-    if(handle){handle.setAttribute('aria-valuemin',String(cfg.min));handle.setAttribute('aria-valuemax',String(max));handle.setAttribute('aria-valuenow',String(value));}
+    if(handle){handle.setAttribute('aria-valuemin',String(min));handle.setAttribute('aria-valuemax',String(max));handle.setAttribute('aria-valuenow',String(value));}
     if(persist)localStorage.setItem(cfg.store,String(value));
     return value;
 }
 function syncSidebarHandles() {
-    const max=sidebarMaxWidth(),mobile=pageWidth()<=800;
+    const min=sidebarMinWidth(),max=sidebarMaxWidth(),mobile=pageWidth()<=800;
     for(const kind of Object.keys(SIDEBARS)){
         const cfg=SIDEBARS[kind],handle=$(cfg.handle),panel=$(cfg.panel);if(!handle||!panel)continue;
-        const enabled=!mobile&&max>cfg.min;handle.hidden=!enabled;if(!enabled)continue;
+        const enabled=!mobile&&max>min;handle.hidden=!enabled;if(!enabled)continue;
         if(!document.body.classList.contains(cfg.cls)){
             const width=sidebarWidths[kind]||panel.getBoundingClientRect().width;
             applySidebarWidth(kind,width,false);
@@ -352,7 +353,7 @@ function setSidebarVisible(kind,visible) {
 function toggleSidebar(kind) { const cfg=SIDEBARS[kind];setSidebarVisible(kind,document.body.classList.contains(cfg.cls)); }
 function startSidebarDrag(kind,event) {
     const cfg=SIDEBARS[kind],panel=$(cfg.panel);if(!panel||event.button!==0||pageWidth()<=800)return;
-    const max=sidebarMaxWidth();if(max<=cfg.min)return;
+    const min=sidebarMinWidth(),max=sidebarMaxWidth();if(max<=min)return;
     event.preventDefault();
     const startX=event.clientX,startWidth=panel.getBoundingClientRect().width,direction=kind==='nav'?1:-1;
     let done=false;
@@ -365,7 +366,7 @@ function startSidebarDrag(kind,event) {
     const move=ev=>{
         if(done)return;
         const width=startWidth+(ev.clientX-startX)*direction;
-        if(width<cfg.min){finish(false);setSidebarVisible(kind,false);return;}
+        if(width<min){finish(false);setSidebarVisible(kind,false);return;}
         applySidebarWidth(kind,width,false);
     };
     const up=()=>finish(true);
@@ -382,10 +383,10 @@ function initSidebars() {
         handle.addEventListener('keydown',e=>{
             if(!['ArrowLeft','ArrowRight'].includes(e.key))return;
             e.preventDefault();
-            const current=panel.getBoundingClientRect().width;
+            const current=panel.getBoundingClientRect().width,min=sidebarMinWidth();
             const grow=kind==='nav'?(e.key==='ArrowRight'?1:-1):(e.key==='ArrowLeft'?1:-1);
             const next=current+grow*16;
-            if(next<cfg.min){setSidebarVisible(kind,false);return;}
+            if(next<min){setSidebarVisible(kind,false);return;}
             applySidebarWidth(kind,next,true);
         });
     }
