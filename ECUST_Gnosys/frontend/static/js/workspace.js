@@ -112,6 +112,18 @@ function currentPosition() {
     const p = state.paragraphs[visible ? Number(visible.dataset.pi) : 0];
     return p ? {chapter_idx: state.chapter, paragraph_index: p.paragraph_index, fingerprint: p.fingerprint, quote: p.text} : null;
 }
+// 与 backend/reader/auxiliary_reading.needs_semantic 保持同一判据：
+// 太短、没有句末标点、或像标题/目录行的段落不显示“生成段落解释”。
+function needsSemanticNote(text) {
+    const raw = (text || '').trim();
+    const normalized = raw.normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+    if (normalized.length < 25) return false;
+    const term = /[\u4e00-\u9fff]/.test(raw) ? /[。！？]/ : /[.!?]/;
+    if (!term.test(raw)) return false;
+    const heading = /^(?:[\[［【(（]?第[一二三四五六七八九十百零两0-9]+[章节篇部分卷]|[一二三四五六七八九十]+[、．.]|[0-9]+[、．.)）])/;
+    if (normalized.length <= 60 && heading.test(normalized)) return false;
+    return true;
+}
 function jumpReaderScroll(top) {
     const scroller = $('reader-scroll'), previous = scroller.style.scrollBehavior;
     scroller.style.scrollBehavior = 'auto';
@@ -140,7 +152,7 @@ async function goto(ci, pi = 0, updateHistory = true, edge = 'top') {
         if (p.note) {
             side.append(el('div', 'short', p.note.short || '查看解释'));
             side.append(button('详细 / 逐句', () => openSemantic(p)));
-        } else if (p.text.length >= 25) side.append(button('生成段落解释', () => generate({layer:'L3', paragraph_ref:{chapter_idx:ci, paragraph_index:p.paragraph_index, fingerprint:p.fingerprint}, spec_type:$('agent-spec').value})));
+        } else if (needsSemanticNote(p.text)) side.append(button('生成段落解释', () => generate({layer:'L3', paragraph_ref:{chapter_idx:ci, paragraph_index:p.paragraph_index, fingerprint:p.fingerprint}, spec_type:$('agent-spec').value})));
         row.append(source, side); fragment.append(row);
     });
     data.images.forEach(markup => { const holder = el('div'); holder.innerHTML = DOMPurify.sanitize(markup); holder.querySelectorAll('img').forEach(img => { img.classList.add('book-image'); const src = img.getAttribute('src'); if (src && !/^(https?:|\/)/i.test(src)) img.src = '/read/' + book + '/' + src; }); fragment.append(holder); });
