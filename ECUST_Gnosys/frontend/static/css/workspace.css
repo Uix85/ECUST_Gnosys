@@ -72,8 +72,8 @@ body{height:100dvh;overflow:hidden}.library-page{height:auto;min-height:100dvh;o
 .nav-footer .pager-button:hover{background:var(--blue-soft);color:var(--blue)}
 .nav-footer .pager-button:disabled{opacity:.35;background:transparent}
 .nav-footer #chapter-counter{min-width:64px;text-align:center;color:var(--muted);font-size:11px;white-space:nowrap}
-.toc-row button:not(.toc-fold){font-size:var(--toc-title-size,13px)}
-.toc-row .toc-fold svg{display:block;width:var(--toc-fold-size,16px);height:var(--toc-fold-size,16px);fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.toc-row button:not(.toc-fold){font-size:var(--toc-title-size,12px)}
+.toc-row .toc-fold svg{display:block;width:var(--toc-fold-size,14px);height:var(--toc-fold-size,14px);fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
 .note-layer-current{color:var(--muted);font-size:11px;font-weight:600}
 .tab-dropdown{position:relative;display:flex;flex:1;min-width:0}
 .tab-dropdown>.layer-menu{position:absolute;top:100%;left:0;right:0;z-index:30;display:none;flex-direction:column;padding:5px;background:#fff;border:1px solid var(--line);border-top:0;border-radius:0 0 7px 7px;box-shadow:0 12px 24px #182f4b1f}
