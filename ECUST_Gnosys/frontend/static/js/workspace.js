@@ -107,8 +107,15 @@ function currentPosition() {
     const p = state.paragraphs[visible ? Number(visible.dataset.pi) : 0];
     return p ? {chapter_idx: state.chapter, paragraph_index: p.paragraph_index, fingerprint: p.fingerprint, quote: p.text} : null;
 }
+function jumpReaderScroll(top) {
+    const scroller = $('reader-scroll'), previous = scroller.style.scrollBehavior;
+    scroller.style.scrollBehavior = 'auto';
+    scroller.scrollTop = top;
+    scroller.style.scrollBehavior = previous;
+}
 async function goto(ci, pi = 0, updateHistory = true) {
     if (ci < 0 || ci >= cfg.total) return;
+    const chapterChanged = ci !== state.chapter;
     const version = ++state.generation;
     $('chapter-content').setAttribute('aria-busy', 'true');
     const data = await api(base + '/chapter/' + ci);
@@ -141,7 +148,8 @@ async function goto(ci, pi = 0, updateHistory = true) {
     data.images.forEach(markup => { const holder = el('div'); holder.innerHTML = DOMPurify.sanitize(markup); holder.querySelectorAll('img').forEach(img => { img.classList.add('book-image'); const src = img.getAttribute('src'); if (src && !/^(https?:|\/)/i.test(src)) img.src = '/read/' + book + '/' + src; }); fragment.append(holder); });
     $('chapter-content').replaceChildren(fragment); $('chapter-content').setAttribute('aria-busy', 'false');
     updateTocActive(pi);
-    $('reader-scroll').scrollTop = 0;
+    if (chapterChanged) jumpReaderScroll(0);
+    else $('reader-scroll').scrollTop = 0;
     if (pi > 0 && state.paragraphs[pi]) locate(pi);
     if (updateHistory && !cfg.noteMode) history.replaceState({}, '', '/read/' + book + '/' + ci + '#source=' + ci + ':' + pi);
     clearTimeout(progressTimer); const ref = currentPosition(); if (ref) api(base + '/state', ref, 'PUT').catch(e => toast(e.message));
