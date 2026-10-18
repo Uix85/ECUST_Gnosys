@@ -113,7 +113,7 @@ function jumpReaderScroll(top) {
     scroller.scrollTop = top;
     scroller.style.scrollBehavior = previous;
 }
-async function goto(ci, pi = 0, updateHistory = true) {
+async function goto(ci, pi = 0, updateHistory = true, edge = 'top') {
     if (ci < 0 || ci >= cfg.total) return;
     const chapterChanged = ci !== state.chapter;
     const version = ++state.generation;
@@ -147,11 +147,13 @@ async function goto(ci, pi = 0, updateHistory = true) {
     });
     data.images.forEach(markup => { const holder = el('div'); holder.innerHTML = DOMPurify.sanitize(markup); holder.querySelectorAll('img').forEach(img => { img.classList.add('book-image'); const src = img.getAttribute('src'); if (src && !/^(https?:|\/)/i.test(src)) img.src = '/read/' + book + '/' + src; }); fragment.append(holder); });
     $('chapter-content').replaceChildren(fragment); $('chapter-content').setAttribute('aria-busy', 'false');
-    updateTocActive(pi);
-    if (chapterChanged) jumpReaderScroll(0);
+    const landingAtBottom = chapterChanged && pi === 0 && edge === 'bottom';
+    if (chapterChanged) jumpReaderScroll(landingAtBottom ? $('reader-scroll').scrollHeight : 0);
     else $('reader-scroll').scrollTop = 0;
+    const landingPi = landingAtBottom ? (currentPosition()?.paragraph_index ?? 0) : pi;
+    updateTocActive(landingPi);
     if (pi > 0 && state.paragraphs[pi]) locate(pi);
-    if (updateHistory && !cfg.noteMode) history.replaceState({}, '', '/read/' + book + '/' + ci + '#source=' + ci + ':' + pi);
+    if (updateHistory && !cfg.noteMode) history.replaceState({}, '', '/read/' + book + '/' + ci + '#source=' + ci + ':' + landingPi);
     clearTimeout(progressTimer); const ref = currentPosition(); if (ref) api(base + '/state', ref, 'PUT').catch(e => toast(e.message));
 }
 function locate(pi) { const target = $('paragraph-' + pi); if (!target) return; target.scrollIntoView({block: 'start'}); document.querySelectorAll('.located').forEach(n => n.classList.remove('located')); target.classList.add('located'); setTimeout(() => target.classList.remove('located'), 2600); }
@@ -465,7 +467,7 @@ on('reader-scroll','scroll',()=>{
         const target=e.deltaY>0?(atBottom&&state.chapter<cfg.total-1?state.chapter+1:null):(atTop&&state.chapter>0?state.chapter-1:null);
         if(target===null)return;
         state.chapterNavLock=true;
-        goto(target,0).catch(err=>toast(err.message)).finally(()=>setTimeout(()=>state.chapterNavLock=false,400));
+        goto(target,0,true,e.deltaY<0?'bottom':'top').catch(err=>toast(err.message)).finally(()=>setTimeout(()=>state.chapterNavLock=false,400));
     },{passive:true});
 }
 on('generate-semantic','click',()=>generate({layer:'L3',chapter_idx:state.chapter,mode:'fill_missing',spec_type:$('agent-spec').value}));
