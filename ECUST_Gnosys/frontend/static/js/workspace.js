@@ -309,7 +309,7 @@ const SIDEBARS = {
 const READING_MIN_WIDTH = 320;
 const sidebarWidths = {nav:0, inspector:0};
 function pageWidth() { return document.documentElement.clientWidth || window.innerWidth; }
-function sidebarMinWidth() { return Math.max(1,Math.ceil(pageWidth()/20)); }
+function sidebarMinWidth() { return Math.max(1,Math.ceil(pageWidth()/50)); }
 function sidebarMaxWidth() {
     const page=pageWidth();
     // 硬上限：页宽 1/3；同时给中间阅读区留出最小宽度，避免三栏挤爆。
