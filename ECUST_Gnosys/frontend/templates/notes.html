@@ -43,7 +43,7 @@
 </head>
 <body>
 
-<script src="{{ url_for('static', path='js/markdown_render.js') }}"></script>
+<script src="{{ url_for('static', path='js/markdown_render.js') }}?v={{ asset_version() }}"></script>
 {% include 'scrollbar.html' %}
 
 <div class="nb-bar">

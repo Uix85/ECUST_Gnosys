@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{ book.metadata.title }} · Gnosys</title>
-<link rel="stylesheet" href="/static/css/workspace.css">
+<link rel="stylesheet" href="/static/css/workspace.css?v={{ asset_version() }}">
 {% include 'markdown_assets.html' %}
 </head>
 <body class="reader-page">
@@ -72,5 +72,5 @@
 <div id="selection-actions" class="selection-actions" hidden><button id="selection-chat">加入对话</button><button id="selection-concept">解释概念</button><button id="selection-semantic">语义笔记</button></div>
 <div id="toast" role="status" hidden></div>
 <script>window.GNOSYS = {bookId: {{ book_id|tojson }}, chapter: {{ chapter_idx }}, total: {{ total_chapters }}, title: {{ book.metadata.title|tojson }}, noteMode: {{ note_mode|default(false)|tojson }}};</script>
-<script src="/static/js/workspace.js" defer></script>
+<script src="/static/js/workspace.js?v={{ asset_version() }}" defer></script>
 </body></html>
