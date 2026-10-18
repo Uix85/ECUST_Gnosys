@@ -454,6 +454,6 @@ function setSemanticVisible(visible){
 }
 initReadingCycles();
 setSemanticVisible(true);
-async function init(){initSidebars();if(innerWidth<=800){document.body.classList.add('no-navigation','no-inspector');$('toggle-nav').setAttribute('aria-expanded','false');$('toggle-panel').setAttribute('aria-expanded','false');}const data=await api(base+'/outline');state.nodes=data.items;await nav('outline');const match=location.hash.match(/source=(\d+):(\d+)/);await goto(match?Number(match[1]):state.chapter,match?Number(match[2]):0,false);await sessions();if(cfg.noteMode)await openNote('L1');window.GNOSYS.ready=true;}
+async function init(){const settingsLink=$('open-settings');if(settingsLink)settingsLink.href='/settings?from='+encodeURIComponent(location.pathname+location.search+location.hash);initSidebars();if(innerWidth<=800){document.body.classList.add('no-navigation','no-inspector');$('toggle-nav').setAttribute('aria-expanded','false');$('toggle-panel').setAttribute('aria-expanded','false');}const data=await api(base+'/outline');state.nodes=data.items;await nav('outline');const match=location.hash.match(/source=(\d+):(\d+)/);await goto(match?Number(match[1]):state.chapter,match?Number(match[2]):0,false);await sessions();if(cfg.noteMode)await openNote('L1');window.GNOSYS.ready=true;}
 init().catch(e=>toast(e.message));
 })();
