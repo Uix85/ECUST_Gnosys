@@ -50,9 +50,10 @@ function nodeButton(node) {
     row.hidden = !tocVisible(node);
     if (tocHasChildren(node.id)) {
         const expanded = tocExpanded(node.id);
-        const fold = button(expanded ? '⌄' : '›', () => toggleToc(node.id), 'toc-fold');
+        const fold = button('', () => toggleToc(node.id), 'toc-fold');
         fold.setAttribute('aria-label', '折叠或展开 ' + node.title);
         fold.setAttribute('aria-expanded', String(expanded));
+        fold.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${expanded ? 'M6 9l6 6 6-6' : 'M9 6l6 6-6 6'}"/></svg>`;
         row.append(fold);
     } else row.append(el('span', 'toc-fold', ''));
     const link = button(node.title, () => goto(node.chapter_idx, node.paragraph_index)); link.title = node.path.join(' - '); row.append(link); return row;
