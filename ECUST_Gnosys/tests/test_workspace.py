@@ -70,6 +70,9 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         r=await self.client.post('/upload',files={'file':('研究.txt',TEXT.encode('gb18030'),'text/plain')})
         self.assertEqual(r.status_code,200,r.text);self.assertNotEqual(r.json()['folder'],self.book)
         original=book_db(self.book).execute('SELECT source_file FROM books').fetchone()[0];self.assertEqual(original,'研究.txt')
+        utf16=await self.client.post('/upload',files={'file':('UTF16.txt',TEXT.encode('utf-16'),'text/plain')})
+        self.assertEqual(utf16.status_code,200,utf16.text)
+        self.assertEqual(book_db(utf16.json()['folder']).execute('SELECT source_file FROM books').fetchone()[0],'UTF16.txt')
         for name,content in [('坏.epub',b'bad'),('空.txt',b''),('坏.txt',b'\x00\x01\x00'),('bad.pdf',b'bad')]:
             r=await self.client.post('/upload',files={'file':(name,content)});self.assertEqual(r.status_code,400,r.text)
         self.assertFalse(any(p.name.startswith('.import-') for p in Path(os.environ['GNOSYS_BOOKS_DIR']).iterdir()))
@@ -77,9 +80,16 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         from ebooklib import epub
         with tempfile.TemporaryDirectory() as d:
             b=epub.EpubBook();b.set_identifier('fixture');b.set_title('EPUB 测试');b.set_language('zh')
-            chapter=epub.EpubHtml(title='第一章',file_name='one.xhtml',lang='zh');chapter.content='<h1>第一章</h1><h2>第一节</h2><h3>子节</h3><p>'+SOURCE+'</p><img src="x" onerror="alert(1)">';b.add_item(chapter);b.spine=['nav',chapter];b.toc=(chapter,);b.add_item(epub.EpubNcx());b.add_item(epub.EpubNav());path=Path(d)/'书.epub';epub.write_epub(str(path),b)
+            from PIL import Image
+            pixels=Path(d)/'pixel.png';image_data=Image.new('RGB',(4,4));image_data.putdata([(220,40,80),(20,180,70),(30,60,220),(240,210,10)]*4);image_data.save(pixels)
+            image=epub.EpubItem(uid='pixel',file_name='images/pixel.png',media_type='image/png',content=pixels.read_bytes())
+            chapter=epub.EpubHtml(title='第一章',file_name='one.xhtml',lang='zh');chapter.content='<h1>第一章</h1><h2>第一节</h2><h3>子节</h3><p>'+SOURCE+'</p><img src="images/pixel.png" onerror="alert(1)">';b.add_item(chapter);b.add_item(image);b.spine=['nav',chapter];b.toc=(chapter,);b.add_item(epub.EpubNcx());b.add_item(epub.EpubNav());path=Path(d)/'书.epub';epub.write_epub(str(path),b)
             r=await self.client.post('/upload',files={'file':('书.epub',path.read_bytes(),'application/epub+zip')});self.assertEqual(r.status_code,200,r.text)
-            nodes=outline_nodes(r.json()['folder']);self.assertTrue(any(n['depth']>=2 for n in nodes),nodes)
+            folder=r.json()['folder'];nodes=outline_nodes(folder);self.assertTrue(any(n['depth']>=2 for n in nodes),nodes)
+            chapter=await self.client.get(f'/api/full_chapter/{folder}/0');self.assertEqual(chapter.status_code,200,chapter.text)
+            self.assertIn('images/pixel.png',chapter.json()['html']);self.assertNotIn('onerror',chapter.json()['html'])
+            served=await self.client.get(f'/read/{folder}/images/pixel.png');self.assertEqual(served.status_code,200);self.assertEqual(served.content[:8],b'\x89PNG\r\n\x1a\n')
+            self.assertEqual((await self.client.get(f'/api/full_chapter/{folder}/99')).status_code,404)
 
     async def test_outline_reference_search_state_bookmarks(self):
         data=(await self.client.get(self.base+'/outline')).json()['items'];self.assertEqual(len({n['id'] for n in data}),len(data));self.assertTrue(any(n['depth']==2 for n in data))
@@ -118,6 +128,67 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.execute('SELECT content FROM book_layer').fetchone()[0],'旧笔记')
         r=await self.client.post('/api/layer/concept/'+self.book,json={'term':'关系'});self.assertEqual(r.status_code,422)
         self.assertEqual((await self.client.get('/api/layer/concept/'+self.book+'?term=不存在')).json()['content'],'')
+
+    async def test_legacy_layer_crud_lists_and_paragraph_separation(self):
+        layers='/api/layer'
+        self.assertFalse((await self.client.get(layers+'/book/'+self.book)).json()['matched'])
+        self.assertEqual((await self.client.post(layers+'/book/'+self.book,json={'content':'## 全书旧格式'})).status_code,200)
+        book=(await self.client.get(layers+'/book/'+self.book)).json();self.assertTrue(book['matched']);self.assertEqual(book['content'],'## 全书旧格式')
+
+        chapters=(await self.client.get(layers+'/chapter_list/'+self.book)).json()['items']
+        self.assertTrue(chapters);self.assertFalse(chapters[0]['has_content'])
+        self.assertFalse((await self.client.get(layers+'/chapter/'+self.book+'/0')).json()['matched'])
+        self.assertEqual((await self.client.post(layers+'/chapter/'+self.book+'/0',json={'content':'## 章节旧格式'})).status_code,200)
+        chapter=(await self.client.get(layers+'/chapter/'+self.book+'/0')).json();self.assertTrue(chapter['matched']);self.assertEqual(chapter['content'],'## 章节旧格式')
+        self.assertTrue((await self.client.get(layers+'/chapter_list/'+self.book)).json()['items'][0]['has_content'])
+        self.assertEqual((await self.client.get(layers+'/chapter/'+self.book+'/99')).status_code,404)
+
+        text='  一段有意义的原文  '
+        body={'text':text,'content':'划线语义','source_text':'一段有意义的原文','anchor_text':'段落前缀'}
+        self.assertEqual((await self.client.post(layers+'/semantic/'+self.book,json=body)).status_code,200)
+        self.assertEqual((await self.client.get(layers+'/semantic/'+self.book,params={'text':'一段有意义的原文'})).json()['content'],'划线语义')
+        self.assertEqual((await self.client.get(layers+'/semantic_list/'+self.book)).json()['items'][0]['source_text'],'一段有意义的原文')
+        self.assertEqual((await self.client.post(layers+'/semantic/'+self.book,json={**body,'content':'更新语义'})).status_code,200)
+        self.assertEqual((await self.client.get(layers+'/semantic/'+self.book,params={'text':text})).json()['content'],'更新语义')
+        self.assertTrue((await self.client.delete(layers+'/semantic/'+self.book,params={'text':text})).json()['deleted'])
+        self.assertFalse((await self.client.get(layers+'/semantic/'+self.book,params={'text':text})).json()['matched'])
+
+        concept={'term':'社会关系','content':'概念解释','source_text':'社会关系','anchor_text':'段落前缀'}
+        self.assertEqual((await self.client.post(layers+'/concept/'+self.book,json=concept)).status_code,200)
+        self.assertEqual((await self.client.get(layers+'/concept/'+self.book,params={'term':'社会关系'})).json()['content'],'概念解释')
+        self.assertEqual((await self.client.get(layers+'/concept_list/'+self.book)).json()['items'][0]['term'],'社会关系')
+        self.assertEqual((await self.client.post(layers+'/concept/'+self.book,json={**concept,'content':'更新概念'})).status_code,200)
+        self.assertEqual((await self.client.get(layers+'/concept/'+self.book,params={'term':'社会关系'})).json()['content'],'更新概念')
+        self.assertTrue((await self.client.delete(layers+'/concept/'+self.book,params={'term':'社会关系'})).json()['deleted'])
+        self.assertFalse((await self.client.get(layers+'/concept/'+self.book,params={'term':'社会关系'})).json()['matched'])
+
+        para={'text':SOURCE,'content':'简要解释','detail':'逐段解释','sentences':['第一句解释','第二句解释']}
+        self.assertEqual((await self.client.post(layers+'/para_semantic/'+self.book,json=para)).status_code,200)
+        paragraph=(await self.client.get(layers+'/para_semantic/'+self.book,params={'chapter':0})).json()['items']
+        self.assertTrue(any(x['source_text']==SOURCE and x['sentences']==para['sentences'] for x in paragraph))
+        self.assertEqual((await self.client.get(layers+'/para_semantic/'+self.book)).status_code,200)
+        self.assertTrue((await self.client.get(self.base+'/notes')).json()['items'])
+        self.assertEqual((await self.client.delete(layers+'/para_semantic/'+self.book,params={'text':SOURCE})).json()['deleted'],1)
+        self.assertFalse(any(x['source_text']==SOURCE for x in (await self.client.get(layers+'/para_semantic/'+self.book,params={'chapter':0})).json()['items']))
+
+        await self.client.post(layers+'/semantic/'+self.book,json={'text':'这条划线不应随着段落批量删除','content':'保留的选区解释'})
+        await self.client.post(layers+'/para_semantic/'+self.book,json=para)
+        cleared=(await self.client.delete(layers+'/para_semantic/'+self.book)).json();self.assertGreaterEqual(cleared['deleted'],1)
+        self.assertTrue(any(x['content']=='保留的选区解释' for x in (await self.client.get(layers+'/semantic_list/'+self.book)).json()['items']))
+        self.assertFalse((await self.client.get(layers+'/para_semantic/'+self.book,params={'chapter':0})).json()['items'])
+
+    async def test_book_delete_cancels_active_work_and_removes_only_that_book(self):
+        r=await self.client.post('/upload',files={'file':('待删除.txt',TEXT.encode(),'text/plain')});self.assertEqual(r.status_code,200,r.text)
+        folder=r.json()['folder'];path=Path(os.environ['GNOSYS_BOOKS_DIR'])/folder
+        self.model.delay=.2
+        run=await self.client.post('/api/agent/'+folder+'/runs',json={'layer':'L2','target':{'chapter_idx':0}})
+        self.assertEqual(run.status_code,200,run.text)
+        deleted=await self.client.delete('/api/books/'+folder);self.assertEqual(deleted.status_code,200,deleted.text)
+        self.assertFalse(path.exists())
+        self.assertTrue(Path(os.environ['GNOSYS_BOOKS_DIR'],self.book).exists())
+        self.assertEqual((await self.client.delete('/api/books/'+folder)).status_code,404)
+        self.assertEqual((await self.client.delete('/api/books/not-a-book')).status_code,400)
+        self.assertEqual((await self.client.get('/notes/'+folder)).status_code,404)
 
     async def test_four_layers_actual_sdk_and_events(self):
         for layer,target in [('L1',{}),('L2',{'chapter_idx':0}),('L4',{'chapter_idx':0,'paragraph_index':3,'term':'社会关系'})]:

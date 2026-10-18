@@ -22,6 +22,13 @@ model=ReadingModel(delay=float(os.environ.get('GNOSYS_QA_DELAY','.015')))
 layer.build_model=lambda _:model
 l3_paragraph.build_model=lambda _:model
 chat.build_model=lambda _:model
+from fastapi import Body
+@app.post('/__qa/model')
+async def configure_fake_model(body: dict = Body(...)):
+ model.approve=body.get('approve',True)
+ model.fail=body.get('fail',False)
+ model.delay=body.get('delay',.015)
+ return {'ok':True,'approve':model.approve}
 print('QA_BOOK='+fake_model.BOOK_ID,flush=True)
 if __name__=='__main__':
  import uvicorn

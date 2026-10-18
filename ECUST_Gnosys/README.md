@@ -52,6 +52,8 @@ ego-browser nodejs < tests/browser_e2e.mjs
 
 浏览器报告和桌面视口截图保存在 [docs/acceptance](docs/acceptance/)（脚本同时写入 `/tmp`）。更完整的逐项结果见 [验收记录](docs/implementation_acceptance.md)。
 
+浏览器脚本使用本地确定性模型替身，不调用真实模型；当前验收覆盖 390/1024/1440 像素视口、页面内任务失败重试/取消/待核稿采纳，以及临时书籍导入和删除。
+
 原有无模型自检仍可单独运行：
 
 ```bash
