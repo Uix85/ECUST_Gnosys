@@ -535,16 +535,45 @@ on('selection-concept','click',async()=>{
 });
 window.addEventListener('beforeunload',e=>{if(state.dirty){e.preventDefault();e.returnValue='';}});
 function initReadingCycles(){
-    const setup=(id,key,css,values,fallback,unit,label)=>{
-        const btn=$(id);if(!btn)return;
-        let value=localStorage.getItem('gnosys-'+key)||fallback;
-        if(!values.includes(value))value=fallback;
-        const apply=v=>{value=v;localStorage.setItem('gnosys-'+key,v);document.documentElement.style.setProperty(css,v+unit);btn.title=label+'：'+v;btn.setAttribute('aria-label',label+'：'+v);};
+    const closeMenus=()=>document.querySelectorAll('.reading-pref.open').forEach(wrap=>{
+        wrap.classList.remove('open');
+        wrap.querySelector('.reading-pref-button')?.setAttribute('aria-expanded','false');
+    });
+    const controls=[
+        {id:'font-size-cycle',key:'font-size',css:'--reading-size',values:['16','18','20','22','24'],fallback:'18',unit:'px',label:'字号',format:v=>v+'px'},
+        {id:'line-height-cycle',key:'line-height',css:'--reading-line',values:['1.6','1.9','2.2'],fallback:'1.9',unit:'',label:'行距',format:v=>v}
+    ];
+    controls.forEach(cfg=>{
+        const btn=$(cfg.id);if(!btn)return;
+        const wrap=btn.closest('.reading-pref'),menu=wrap?.querySelector('.reading-pref-menu');
+        if(!wrap||!menu)return;
+        let value=localStorage.getItem('gnosys-'+cfg.key)||cfg.fallback;
+        if(!cfg.values.includes(value))value=cfg.fallback;
+        const options=new Map();
+        const apply=v=>{
+            value=v;localStorage.setItem('gnosys-'+cfg.key,v);
+            document.documentElement.style.setProperty(cfg.css,v+cfg.unit);
+            btn.textContent=cfg.label+' '+cfg.format(v);
+            btn.title=cfg.label+'：'+cfg.format(v);
+            btn.setAttribute('aria-label',cfg.label+'：'+cfg.format(v));
+            options.forEach((opt,val)=>opt.setAttribute('aria-selected',String(val===v)));
+        };
+        cfg.values.forEach(v=>{
+            const opt=el('button','reading-pref-option',cfg.format(v));opt.type='button';
+            opt.setAttribute('role','option');opt.dataset.value=v;
+            opt.onclick=e=>{e.stopPropagation();apply(v);closeMenus();btn.focus();};
+            options.set(v,opt);menu.append(opt);
+        });
         apply(value);
-        on(id,'click',()=>apply(values[(values.indexOf(value)+1)%values.length]));
-    };
-    setup('font-size-cycle','font-size','--reading-size',['16','18','20','22','24'],'18','px','字号');
-    setup('line-height-cycle','line-height','--reading-line',['1.6','1.9','2.2'],'1.9','','行距');
+        btn.onclick=e=>{
+            e.stopPropagation();
+            const wasOpen=wrap.classList.contains('open');
+            closeMenus();
+            if(!wasOpen){wrap.classList.add('open');btn.setAttribute('aria-expanded','true');}
+        };
+    });
+    document.addEventListener('click',closeMenus);
+    document.addEventListener('keydown',e=>{if(e.key==='Escape')closeMenus();});
 }
 function setSemanticVisible(visible){
     document.body.classList.toggle('hide-semantic',!visible);
