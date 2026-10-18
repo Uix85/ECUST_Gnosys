@@ -137,17 +137,26 @@ async function goto(ci, pi = 0, updateHistory = true, edge = 'top') {
         source.querySelectorAll('img').forEach(image => { const src = image.getAttribute('src'); if (src && !/^(https?:|\/)/i.test(src)) image.src = '/read/' + book + '/' + src; });
         const side = el('aside', 'semantic-note'); side.setAttribute('aria-label', '段落解释');
         if (p.note) {
-            side.append(button(p.note.short || '查看解释', () => openSemantic(p), 'short'));
-            side.append(button('详细 / 逐句', () => {
-                const old = side.querySelector('.detail'); if (old) { old.remove(); return; }
+            const short = button(p.note.short || '查看解释', () => openSemantic(p), 'short');
+            const toggle = button('详细 / 逐句', () => {
+                if (detailSlot.firstChild) {
+                    detailSlot.replaceChildren();
+                    short.hidden = false;
+                    toggle.textContent = '详细 / 逐句';
+                    return;
+                }
+                short.hidden = true;
+                toggle.textContent = '收起详细 / 逐句';
                 const detail = mdBox(p.note.detail || p.note.short); detail.classList.add('detail');
                 if (p.note.sentences?.length) {
                     detail.append(el('h4', '', '逐句解释')); p.note.sentences.forEach((s, index) => { detail.append(mdBox((index + 1) + '. ' + s)); });
                 }
-                side.append(detail);
-            }));
+                detailSlot.append(detail);
+            });
+            side.append(short, toggle);
         } else if (p.text.length >= 25) side.append(button('生成段落解释', () => generate({layer:'L3', paragraph_ref:{chapter_idx:ci, paragraph_index:p.paragraph_index, fingerprint:p.fingerprint}, spec_type:$('agent-spec').value})));
-        side.append(button('编辑', () => openSemantic(p))); row.append(source, side); fragment.append(row);
+        const detailSlot = el('div', 'semantic-detail-slot');
+        side.append(detailSlot, button('编辑', () => openSemantic(p))); row.append(source, side); fragment.append(row);
     });
     data.images.forEach(markup => { const holder = el('div'); holder.innerHTML = DOMPurify.sanitize(markup); holder.querySelectorAll('img').forEach(img => { img.classList.add('book-image'); const src = img.getAttribute('src'); if (src && !/^(https?:|\/)/i.test(src)) img.src = '/read/' + book + '/' + src; }); fragment.append(holder); });
     $('chapter-content').replaceChildren(fragment); $('chapter-content').setAttribute('aria-busy', 'false');
