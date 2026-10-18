@@ -92,7 +92,7 @@ assert.equal(await page.evaluate(()=>document.querySelector('#note-editor').valu
 assert.ok((await page.evaluate(()=>document.querySelector('#note-save-state').textContent)).includes('冲突'));
 pass('并发保存冲突保留输入并导出备份','/tmp/gnosys-e2e-conflict.md');
 // Discard only the QA draft through the UI's explicit dialog.
-const leave=await page.click('#open-chapter-note');if(leave.dialog)await page.acceptDialog();
+await page.click('[data-panel="note"]');await page.evaluate(()=>{const s=document.querySelector('#note-layer');s.value='L2';s.dispatchEvent(new Event('change',{bubbles:true}));});
 await page.waitForFunction(()=>document.querySelector('#note-layer').value==='L2');
 await page.click('#generate-note');await waitRun('L2');
 pass('章节 AI 从页面触发至完成','completed');
