@@ -271,7 +271,7 @@ function refChip(ref, remove) {
     const n = el('span','reference-chip' + (ref.valid === false ? ' invalid' : ''));
     const label = (ref.valid === false ? '已失效 · ' : '') + (ref.label || ref.quote || ref.path?.join(' - ') || '原文');
     n.append(button(label, () => jumpReference(ref))); n.title = label;
-    if (remove) { const b = button('×', remove); b.setAttribute('aria-label','移除引用 ' + label); n.append(b); } return n;
+    if (remove) { const b = button('×', remove, 'reference-remove'); b.setAttribute('aria-label','移除引用 ' + label); n.append(b); } return n;
 }
 function addReferences(refs) { for (const ref of refs) { if (!state.references.some(x => JSON.stringify(x) === JSON.stringify(ref))) state.references.push(ref); } state.references = state.references.slice(0,20); renderChips(); panel('chat'); $('chat-input').focus(); }
 function closeMentions() { mention = null; $('mention-list').hidden = true; $('chat-input').setAttribute('aria-expanded','false'); $('chat-input').removeAttribute('aria-activedescendant'); }
