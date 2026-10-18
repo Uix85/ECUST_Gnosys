@@ -497,7 +497,28 @@ function initSidebars() {
     syncSidebarHandles();
 }
 // Shared navigation for evidence links emitted by the model and generated notes.
-document.addEventListener('click',e=>{const a=e.target.closest('a');if(!a)return;const match=(a.getAttribute('href')||'').match(/^#source=(\d+):(\d+)$/);if(match){e.preventDefault();goto(Number(match[1]),Number(match[2])).catch(err=>toast(err.message));}});
+document.addEventListener('click',e=>{
+    const a=e.target.closest('a');if(!a)return;
+    const href=a.getAttribute('href')||'';
+    const match=href.match(/^#source=(\d+):(\d+)$/);
+    if(match){e.preventDefault();goto(Number(match[1]),Number(match[2])).catch(err=>toast(err.message));return;}
+    if(!a.closest('#chapter-content')||!href.includes('#'))return;
+    const raw=href.slice(href.indexOf('#')+1);
+    let anchor=raw;try{anchor=decodeURIComponent(raw);}catch(e){}
+    const ci=cfg.anchorMap?.[anchor];
+    if(!Number.isInteger(ci))return;
+    e.preventDefault();
+    jumpToAnchor(ci,anchor).catch(err=>toast(err.message));
+});
+async function jumpToAnchor(ci,anchor){
+    await goto(ci,0,true);
+    const target=document.getElementById(anchor);if(!target)return;
+    const source=target.closest('.source');
+    if(source){source.classList.add('located');setTimeout(()=>source.classList.remove('located'),2600);}
+    const scroller=$('reader-scroll');
+    const top=scroller.scrollTop+target.getBoundingClientRect().top-scroller.getBoundingClientRect().top;
+    scroller.scrollTo({top,behavior:'smooth'});
+}
 document.querySelectorAll('[data-panel]').forEach(b=>b.onclick=()=>panel(b.dataset.panel));document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>nav(b.dataset.nav).catch(e=>toast(e.message)));
 on('toggle-nav','click',()=>toggleSidebar('nav'));
 on('toggle-panel','click',()=>toggleSidebar('inspector'));
