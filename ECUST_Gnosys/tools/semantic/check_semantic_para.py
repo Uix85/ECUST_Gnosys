@@ -3,7 +3,7 @@
 对照口径与前端 SemMargin 一致：正文段落 = 章节 HTML 按 <br> 切分，匹配键 = NFKC + 去空白 + 小写。
 
 用法：
-    python check_semantic_para.py                     # 检查 books/ 下全部书
+    python check_semantic_para.py                     # 检查 database/books/ 下全部书
     python check_semantic_para.py "江村经济_data"      # 只检查一本
 """
 

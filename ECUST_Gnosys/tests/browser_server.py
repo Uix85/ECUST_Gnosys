@@ -7,7 +7,10 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT),str(ROOT/'backend'),str(ROOT/'tests')]
 DATA=tempfile.TemporaryDirectory(prefix='gnosys-browser-')
 os.environ['GNOSYS_BOOKS_DIR']=str(Path(DATA.name)/'books')
-os.environ['AGENT_API_KEY']='offline-test-key'
+from db import paths as db_paths, settings as settings_db
+db_paths.SETTINGS_DB=Path(DATA.name)/'settings.db'
+settings_db.SETTINGS_DB=db_paths.SETTINGS_DB
+settings_db.save({'AGENT_API_KEY':'offline-test-key'})
 from reader.import_document import import_document
 from fake_model import ReadingModel,SOURCE
 import fake_model

@@ -20,6 +20,7 @@ from bs4 import BeautifulSoup
 from reader.models import Book, TOCEntry, ChapterContent, BookMetadata
 from reader.import_epub import _filter_placeholder_images
 from db.schema import get_db
+from db.paths import BOOKS_DIR
 
 
 # ── 共享正则片段（检测/层级/评分共用，避免多处不一致）──
@@ -686,9 +687,6 @@ def _headings_to_tree(headings: List[dict], use_levels: bool = True) -> List[TOC
 # ═══════════════════════════════════════════
 # 第二部分：渲染管线（原 book_service.py）
 # ═══════════════════════════════════════════
-
-# 书库目录固定在仓库根的 books/（与 backend/ 同级）
-BOOKS_DIR = os.environ.get("GNOSYS_BOOKS_DIR") or os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "books")
 
 _heading_toc_cache: Dict[str, List[TOCEntry]] = {}
 _book_cache: Dict[str, dict] = {}  # book_id → {Book object, db_path}

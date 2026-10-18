@@ -16,7 +16,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / 'backend'), str(ROOT / 'tests')]
 TEMP = tempfile.TemporaryDirectory(prefix='gnosys-test-')
 os.environ['GNOSYS_BOOKS_DIR'] = str(Path(TEMP.name) / 'books')
-os.environ['AGENT_API_KEY'] = 'offline-test-key'
+from db import paths as db_paths, settings as settings_db
+db_paths.SETTINGS_DB = Path(TEMP.name) / 'settings.db'
+settings_db.SETTINGS_DB = db_paths.SETTINGS_DB
+settings_db.save({'AGENT_API_KEY': 'offline-test-key'})
 from httpx import AsyncClient, ASGITransport
 from server import app
 from agent.tools.book import book_db, get_paragraph, logical_paragraphs, split_sentences
@@ -234,8 +237,11 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         r=await self.client.post(self.runs+'/'+ident+'/retry');result=await self.wait_run(r.json()['id']);self.assertEqual(result['status'],'failed',result)
         self.model.fail=False
         r=await self.client.post(self.runs+'/'+result['id']+'/retry');result=await self.wait_run(r.json()['id']);self.assertEqual(result['status'],'completed',result)
-        with patch.dict(os.environ,{'AGENT_RUN_TIMEOUT':'0.005'}):
+        settings_db.save({'AGENT_RUN_TIMEOUT':'0.005'})
+        try:
             self.model.delay=.1;r=await self.client.post(self.runs,json={'layer':'L1'});result=await self.wait_run(r.json()['id']);self.assertEqual(result['status'],'failed',result)
+        finally:
+            settings_db.save({'AGENT_RUN_TIMEOUT':'300'})
 
     async def test_chat_stream_history_sources_idempotency_and_export(self):
         sid=(await self.client.post(self.chat+'/sessions',json={})).json()['id']
@@ -382,8 +388,11 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
             r=await self.client.post(self.runs,json=body);self.assertIn(r.status_code,(404,409,422),r.text)
         sid=(await self.client.post(self.chat+'/sessions',json={})).json()['id']
         r=await self.send(sid,refs=[{'node_id':'missing'}]);self.assertEqual(r.status_code,409)
-        with patch.dict(os.environ,{'AGENT_API_KEY':''}):
+        settings_db.save({'AGENT_API_KEY':''})
+        try:
             r=await self.send(sid);self.assertEqual(r.status_code,422)
+        finally:
+            settings_db.save({'AGENT_API_KEY':'offline-test-key'})
         r=await self.client.get('/api/workspace/..%5Cother_data/outline');self.assertEqual(r.status_code,404)
 
 
@@ -395,12 +404,12 @@ class ProcessRecoveryTest(unittest.IsolatedAsyncioTestCase):
             folder = Path(import_document(source, books)).name
             with socket.socket() as probe:
                 probe.bind(('127.0.0.1', 0)); port = probe.getsockname()[1]
-            env = {**os.environ, 'GNOSYS_BOOKS_DIR': str(books), 'AGENT_API_KEY': 'offline-test-key'}
+            env = {**os.environ, 'GNOSYS_BOOKS_DIR': str(books)}
             helper = ROOT / 'tests' / 'restart_server.py'
             process = None
 
             async def start():
-                child = await asyncio.create_subprocess_exec(sys.executable, str(helper), str(books), str(port),
+                child = await asyncio.create_subprocess_exec(sys.executable, str(helper), str(books), str(port), str(settings_db.SETTINGS_DB),
                     cwd=ROOT, env=env, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
                 async with AsyncClient(timeout=2) as client:
                     for _ in range(100):

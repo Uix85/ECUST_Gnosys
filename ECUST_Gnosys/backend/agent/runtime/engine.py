@@ -179,7 +179,7 @@ set_tracing_disabled(True)
 
 
 def build_model(config):
-    """按 .env 配置造 Agents SDK 的模型对象。
+    """按 SQLite 中的设置造 Agents SDK 的模型对象。
 
     默认的 Responses API 不适用于第三方中转端点，所以显式用 ChatCompletions 通道；
     超时、重试和自定义头都在 AsyncOpenAI 客户端上配置。

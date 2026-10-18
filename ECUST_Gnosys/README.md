@@ -17,7 +17,7 @@ uv run server.py
 uv run backend/reader/import_epub.py "/path/to/book.epub"
 ```
 
-导入的书籍保存在 `books/<书名>_data/`，每本书的数据位于该目录的 `book.db`。导入时会从正文的
+导入的书籍保存在 database/books/<书名>_data/，每本书的数据位于该目录的 book.db。导入时会从正文的
 `<h1>`-`<h6>` 抽出章节层级写入 `chapters.heading_json`；txt 源没有标题标签，由
 `backend/agent/tools/context.py` 的文本行模式兜底推断。
 
@@ -32,7 +32,7 @@ uv run python tools/platform/check_locator.py     # 与现解逐字一致 / 幂�
 
 ### 离线验收
 
-集成测试使用确定性离线模型，通过真实 Agents SDK 执行工具和流式调用；测试书库创建在临时目录中，不会打开 `books/` 中的个人书籍。无需 API 密钥：
+集成测试使用确定性离线模型，通过真实 Agents SDK 执行工具和流式调用；测试书库创建在临时目录中，不会打开 database/books/ 中的个人书籍。无需 API 密钥：
 
 ```bash
 uv run python tests/test_workspace.py
@@ -81,17 +81,13 @@ uv run python tools/structure/run_chapter_layer.py --book <书> --chapter 2 --ap
 
 ## AI 配置
 
-阅读器本身可以先启动；使用 Agent 前，需要配置兼容 OpenAI Chat Completions 工具调用的模型服务。最简单的方式是打开 <http://127.0.0.1:8123/settings>（书库与阅读页右上角也有「设置」）：填写服务地址、模型名和 API 密钥后保存，写入项目根目录的 `.env`（密钥写 `.env.secrets`），下一次 Agent 调用即生效，无需重启。
+阅读器本身可以先启动；使用 Agent 前，需要配置兼容 OpenAI Chat Completions 工具调用的模型服务。打开 http://127.0.0.1:8123/settings（书库与阅读页右上角也有「设置」），填写服务地址、模型名和 API 密钥后保存，数据写入 database/settings.db，下一次 Agent 调用即生效，无需重启。API 密钥只写入本机数据库文件，该文件权限设为当前用户可读写。
 
-也可以手动配置：将 `.env.example` 复制为 `.env`，按需修改模型和服务地址，再在项目根目录创建 `.env.secrets`：
+Agent 设置只从 `database/settings.db` 读取和保存。未单独配置的选项使用内置默认值；修改设置后下一次 Agent 调用立即生效，无需重启。
 
-```dotenv
-AGENT_API_KEY=你的_API_密钥
-```
+下面列出可配置选项：
 
-`.env.secrets` 已加入 Git 忽略规则。配置读取优先级为：进程环境变量、`.env.secrets`、`.env`。被进程环境变量覆盖的键，设置页会明确提示「改文件不生效」。`.env.example` 中可调整的选项包括：
-
-| 变量 | 用途 |
+| 设置项 | 用途 |
 | --- | --- |
 | `AGENT_API_BASE_URL` | OpenAI-compatible Chat Completions 服务地址 |
 | `AGENT_MODEL` | 使用的模型名称 |
@@ -189,7 +185,9 @@ tools/                            开发期自检脚本（零模型，随时可�
 frontend/
   templates/                      阅读器网页模板
   static/                          浏览器静态资源
-books/                             本地导入的书籍及其数据库
+database/                           应用数据
+  books/                           本地导入的书籍及其数据库
+  settings.db                      Agent 模型设置与密钥
 docs/                              项目规范、研究材料和章节文档
   reading_semantics.md            术语规范（译名卡 / 前提追溯库，供 read_glossary）
   定位系统_设计_v1.md             定位层设计（四层的地基：一条主坐标 + 一份结构事实）

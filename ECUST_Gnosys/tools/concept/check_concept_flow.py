@@ -24,10 +24,10 @@ PASS, FAIL = "  ✅", "  ❌"
 
 
 def default_book() -> str:
-    for path in sorted((ROOT / "books").iterdir()):
+    for path in sorted((ROOT / "database" / "books").iterdir()):
         if path.is_dir() and (path / "book.db").is_file() and "精神" in path.name:
             return path.name
-    raise SystemExit("books/ 下没找到《精神现象学》书库")
+    raise SystemExit("database/books/ 下没找到《精神现象学》书库")
 
 
 class Checker:

@@ -118,7 +118,7 @@ async def library_view(request: Request):
     return templates.TemplateResponse(request, "library.html", {"books": books})
 
 
-# ── 设置页：直接改项目根目录的 .env / .env.secrets ──
+# ── 设置页：读写 database/settings.db ──
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_view(request: Request):
     return templates.TemplateResponse(request, "settings.html", {})
@@ -134,7 +134,7 @@ async def read_settings():
 async def update_settings(body: dict = Body(...)):
     from agent.runtime.config import save_settings
     try:
-        # 不缓存：保存后下一次 load_config() 立刻生效（进程环境变量仍优先）
+        # 不缓存：保存后下一次 load_config() 立刻从数据库读取
         return save_settings(body.get("values", {}))
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None

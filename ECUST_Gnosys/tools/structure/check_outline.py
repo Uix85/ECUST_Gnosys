@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 
 def books() -> list[str]:
-    return [p.name for p in sorted((ROOT / "books").iterdir())
+    return [p.name for p in sorted((ROOT / "database" / "books").iterdir())
             if p.is_dir() and (p / "book.db").is_file()]
 
 

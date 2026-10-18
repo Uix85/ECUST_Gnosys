@@ -40,7 +40,7 @@ def looks_like_placeholder(term: str, content: str, book_content: str) -> bool:
 
 def clean(folder: str, apply: bool = False) -> tuple[int, int]:
     from db.schema import close_db, get_db
-    path = ROOT / "books" / folder / "book.db"
+    path = ROOT / "database" / "books" / folder / "book.db"
     if not path.is_file():
         raise SystemExit(f"没有这个书库：{path}")
     db = get_db(str(path))
@@ -64,7 +64,7 @@ def main() -> int:
     parser.add_argument("--book", help="只处理某本书库；省略则全部")
     parser.add_argument("--apply", action="store_true", help="真正执行删除")
     args = parser.parse_args()
-    base = ROOT / "books"
+    base = ROOT / "database" / "books"
     targets = [args.book] if args.book else [p.name for p in sorted(base.iterdir())
                                             if (p / "book.db").is_file()]
     total = 0
