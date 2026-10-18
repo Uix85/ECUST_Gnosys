@@ -47,13 +47,15 @@ function tocVisible(node) {
 function nodeButton(node) {
     const row = el('div', 'toc-row' + (state.tocActive.has(node.id) ? ' active' : '')); row.dataset.depth = node.depth; row.dataset.id = node.id;
     row.style.paddingLeft = Math.min(node.depth, 5) * 12 + 'px';
+    const level = Math.min(node.depth, 4);
+    row.style.setProperty('--toc-title-size', (14 - level) + 'px');
+    row.style.setProperty('--toc-fold-size', (16 - level) + 'px');
     row.hidden = !tocVisible(node);
     if (tocHasChildren(node.id)) {
         const expanded = tocExpanded(node.id);
         const fold = button('', () => toggleToc(node.id), 'toc-fold');
         fold.setAttribute('aria-label', '折叠或展开 ' + node.title);
         fold.setAttribute('aria-expanded', String(expanded));
-        fold.style.setProperty('--toc-fold-size', (16 * Math.pow(0.9, node.depth)).toFixed(2) + 'px');
         fold.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${expanded ? 'M6 9l6 6 6-6' : 'M9 6l6 6-6 6'}"/></svg>`;
         row.append(fold);
     } else row.append(el('span', 'toc-fold', ''));
