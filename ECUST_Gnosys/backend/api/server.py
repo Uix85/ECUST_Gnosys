@@ -39,6 +39,20 @@ app = FastAPI()
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # 应用根目录
 templates = Jinja2Templates(directory=os.path.join(ROOT_DIR, "frontend", "templates"))
 templates.env.auto_reload = True  # reload templates on each request during dev
+STATIC_DIR = os.path.join(ROOT_DIR, "frontend", "static")
+
+
+def _asset_version():
+    """静态资源内容一改，查询串就变，避免浏览器继续用旧 JS/CSS。"""
+    paths = [
+        os.path.join(STATIC_DIR, "css", "workspace.css"),
+        os.path.join(STATIC_DIR, "js", "workspace.js"),
+        os.path.join(STATIC_DIR, "js", "markdown_render.js"),
+    ]
+    return str(max((os.stat(p).st_mtime_ns for p in paths if os.path.exists(p)), default=0))
+
+
+templates.env.globals["asset_version"] = _asset_version
 app.mount("/static", StaticFiles(directory=os.path.join(ROOT_DIR, "frontend", "static")), name="static")
 
 # 辅助阅读（四层级 AI 功能）独立挂载，与基础阅读路由隔离

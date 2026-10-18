@@ -88,7 +88,7 @@ assert.equal(resumed.count,3);assert.equal(resumed.analysis,1);assert.equal(resu
 const security=await page.evaluate(()=>{const box=document.createElement('div');box.innerHTML=renderMarkdown('<img src=x onerror="window.__xss=1">\n\n[x](javascript:alert(1))\n\n<svg onload=alert(1)></svg>\n\n~~删除~~\n\n> 引用\n\n$$x^2$$\n\n```js\nconst x = 1\n');return {unsafe:!!box.querySelector('script,iframe,svg,[onerror],[onload],a[href^="javascript:"]'),strike:!!box.querySelector('s'),quote:!!box.querySelector('blockquote'),math:!!box.querySelector('.katex'),unfinishedCode:!!box.querySelector('pre code')};});
 assert.equal(security.unsafe,false);assert.ok(security.strike&&security.quote&&security.math&&security.unfinishedCode);pass('危险 HTML/链接与未闭合代码块',security);
 
-await page.click('#open-book-note');await page.click('#edit-note');await page.fill('#note-editor','## E2E 手工笔记\n\n- 原文依据\n- 读者记录');await page.click('#save-note');
+await page.click('[data-panel="note"]');await page.evaluate(()=>{const s=document.querySelector('#note-layer');s.value='L1';s.dispatchEvent(new Event('change',{bubbles:true}));});await page.waitForFunction(()=>document.querySelector('#note-layer').value==='L1');await page.click('#edit-note');await page.fill('#note-editor','## E2E 手工笔记\n\n- 原文依据\n- 读者记录');await page.click('#save-note');
 await page.waitForFunction(()=>document.querySelector('#note-save-state').textContent==='已保存');
 await page.click('#edit-note');assert.ok((await page.evaluate(()=>document.querySelector('#note-preview').textContent)).includes('E2E 手工笔记'));
 const noteDownload=page.waitForEvent('download');await page.click('#export-note');const noteFile=await noteDownload;await noteFile.saveAs('/tmp/gnosys-e2e-note.md');assert.ok((await fs.readFile('/tmp/gnosys-e2e-note.md','utf8')).includes('E2E 手工笔记'));
@@ -97,7 +97,7 @@ pass('笔记编辑、预览、保存与 Markdown 导出','/tmp/gnosys-e2e-note.m
 await page.click('#generate-note');
 await waitRun('L1');
 pass('全书 AI 从页面触发至完整覆盖汇总','completed');
-await page.click('#open-book-note');await page.waitForFunction(()=>document.querySelector('#note-layer').value==='L1');
+await page.click('[data-panel="note"]');await page.evaluate(()=>{const s=document.querySelector('#note-layer');s.value='L1';s.dispatchEvent(new Event('change',{bubbles:true}));});await page.waitForFunction(()=>document.querySelector('#note-layer').value==='L1');
 
 // Actual concurrent save through another client: the UI must retain unsaved input.
 await page.click('#edit-note');await page.fill('#note-editor','浏览器仍未保存的修改');
@@ -107,7 +107,7 @@ assert.equal(await page.evaluate(()=>document.querySelector('#note-editor').valu
 assert.ok((await page.evaluate(()=>document.querySelector('#note-save-state').textContent)).includes('冲突'));
 pass('并发保存冲突保留输入并导出备份','/tmp/gnosys-e2e-conflict.md');
 // Discard only the QA draft through the UI's explicit dialog.
-const leave=await page.click('#open-chapter-note');if(leave.dialog)await page.acceptDialog();
+await page.click('[data-panel="note"]');await page.evaluate(()=>{const s=document.querySelector('#note-layer');s.value='L2';s.dispatchEvent(new Event('change',{bubbles:true}));});
 await page.waitForFunction(()=>document.querySelector('#note-layer').value==='L2');
 await page.click('#generate-note');await waitRun('L2');
 pass('章节 AI 从页面触发至完成','completed');
@@ -172,8 +172,10 @@ await page.click('[data-nav=search]');await page.fill('#search-input','社会关
 assert.ok(await page.evaluate(()=>document.querySelectorAll('.search-result').length>=2));
 await page.click('.search-result button >> nth=0');await page.click('#add-bookmark');await page.click('[data-nav=bookmarks]');await visible('.bookmark-row');
 pass('全文搜索、原文定位与书签',true);
-await page.selectOption('#font-size','22');await page.selectOption('#line-height','2.2');await page.reload();await ready();
-assert.equal(await page.evaluate(()=>document.querySelector('#font-size').value),'22');assert.equal(await page.evaluate(()=>document.querySelector('#line-height').value),'2.2');
+for(let i=0;i<5;i++){if((await page.evaluate(()=>localStorage.getItem('gnosys-font-size')))==='22')break;await page.click('#font-size-cycle');}
+for(let i=0;i<3;i++){if((await page.evaluate(()=>localStorage.getItem('gnosys-line-height')))==='2.2')break;await page.click('#line-height-cycle');}
+await page.reload();await ready();
+assert.equal(await page.evaluate(()=>localStorage.getItem('gnosys-font-size')),'22');assert.equal(await page.evaluate(()=>localStorage.getItem('gnosys-line-height')),'2.2');
 pass('阅读字号与行距持久化',true);
 await viewport(1440);
 const beforeResize=await page.evaluate(()=>{const r=document.querySelector('#inspector').getBoundingClientRect();return {width:r.width,x:r.right-2,y:r.bottom-2}});

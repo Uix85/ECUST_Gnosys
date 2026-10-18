@@ -4,8 +4,10 @@ const cfg = window.GNOSYS, book = encodeURIComponent(cfg.bookId);
 const base = '/api/workspace/' + book, agentBase = '/api/agent/' + book + '/runs', chatBase = '/api/chat/' + book;
 const $ = id => document.getElementById(id);
 const state = {chapter: cfg.chapter, nodes: [], paragraphs: [], references: [], session: '', messages: [], activeMessage: '',
-    note: null, dirty: false, editing: false, selected: [], nav: 'outline', panel: 'chat', generation: 0};
-let chatStream, toastTimer, progressTimer, runStream, mention = null, noteRequest = 0;
+    note: null, dirty: false, editing: false, selected: [], nav: 'outline', panel: 'chat', generation: 0,
+    noteSentences: [],
+    tocPinned: new Set(), tocClosed: new Set(), tocActive: new Set(), chapterNavLock: false};
+let chatStream, toastTimer, progressTimer, tocTimer, runStream, mention = null, noteRequest = 0;
 function toast(text) { $('toast').textContent = text; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 5500); }
 async function api(url, body, method) {
     const options = body === undefined ? {} : {method: method || 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)};
@@ -27,23 +29,70 @@ function panel(name) {
     ['chat', 'note', 'runs'].forEach(p => $(p + '-panel').hidden = p !== name);
     if (name === 'runs') refreshRuns().catch(e => toast(e.message));
 }
+function tocNode(id) { return state.nodes.find(n => n.id === id); }
+function tocHasChildren(id) { return state.nodes.some(n => n.parent_id === id); }
+function tocExpanded(id) {
+    if (state.tocClosed.has(id)) return false;
+    if (state.tocPinned.has(id)) return true;
+    return state.tocActive.has(id);
+}
+function tocVisible(node) {
+    let parentId = node.parent_id;
+    while (parentId) {
+        const parent = tocNode(parentId);
+        if (!parent || !tocExpanded(parentId)) return false;
+        parentId = parent.parent_id;
+    }
+    return true;
+}
 function nodeButton(node) {
-    const row = el('div', 'toc-row' + (node.chapter_idx === state.chapter ? ' active' : '')); row.dataset.depth = node.depth; row.dataset.id = node.id;
+    const row = el('div', 'toc-row' + (state.tocActive.has(node.id) ? ' active' : '')); row.dataset.depth = node.depth; row.dataset.id = node.id;
     row.style.paddingLeft = Math.min(node.depth, 5) * 12 + 'px';
-    if (state.nodes.some(n => n.parent_id === node.id)) {
-        const fold = button('⌄', () => {
-            const collapsed = fold.getAttribute('aria-expanded') === 'true'; fold.setAttribute('aria-expanded', String(!collapsed)); fold.textContent = collapsed ? '›' : '⌄';
-            const descendants = new Set([node.id]); state.nodes.forEach(n => { if (descendants.has(n.parent_id)) descendants.add(n.id); });
-            $('nav-results').querySelectorAll('.toc-row').forEach(r => { if (r.dataset.id !== node.id && descendants.has(r.dataset.id)) r.hidden = collapsed; });
-        }, 'toc-fold'); fold.setAttribute('aria-label', '折叠或展开 ' + node.title); fold.setAttribute('aria-expanded', 'true'); row.append(fold);
+    const level = Math.min(node.depth, 4);
+    row.style.setProperty('--toc-title-size', (13.5 - level * 0.5) + 'px');
+    row.style.setProperty('--toc-fold-size', (15.5 - level * 0.5) + 'px');
+    row.hidden = !tocVisible(node);
+    if (tocHasChildren(node.id)) {
+        const expanded = tocExpanded(node.id);
+        const fold = button('', () => toggleToc(node.id), 'toc-fold');
+        fold.setAttribute('aria-label', '折叠或展开 ' + node.title);
+        fold.setAttribute('aria-expanded', String(expanded));
+        fold.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${expanded ? 'M6 9l6 6 6-6' : 'M9 6l6 6-6 6'}"/></svg>`;
+        row.append(fold);
     } else row.append(el('span', 'toc-fold', ''));
     const link = button(node.title, () => goto(node.chapter_idx, node.paragraph_index)); link.title = node.path.join(' - '); row.append(link); return row;
+}
+function renderOutline() {
+    const box = $('nav-results'); if (!box) return;
+    const top = box.scrollTop, fragment = document.createDocumentFragment();
+    state.nodes.forEach(n => fragment.append(nodeButton(n)));
+    box.replaceChildren(fragment); box.scrollTop = top;
+}
+function toggleToc(id) {
+    if (tocExpanded(id)) { state.tocPinned.delete(id); state.tocClosed.add(id); }
+    else { state.tocClosed.delete(id); state.tocPinned.add(id); }
+    renderOutline();
+}
+function updateTocActive(pi) {
+    if (!Number.isInteger(pi)) return;
+    const next = new Set(state.nodes.filter(n => n.chapter_idx === state.chapter && n.paragraph_index <= pi && pi < n.end).map(n => n.id));
+    let same = next.size === state.tocActive.size;
+    if (same) for (const id of next) { if (!state.tocActive.has(id)) { same = false; break; } }
+    if (same) return;
+    // 进入新的章/标题区间时，清除该区间的手动固定状态，恢复自动收展。
+    for (const id of next) if (!state.tocActive.has(id)) { state.tocPinned.delete(id); state.tocClosed.delete(id); }
+    state.tocActive = next;
+    if (state.nav === 'outline') renderOutline();
+}
+function updateTocFromScroll() {
+    const ref = currentPosition();
+    if (ref) updateTocActive(ref.paragraph_index);
 }
 async function nav(name) {
     state.nav = name; $('search-form').hidden = name !== 'search';
     document.querySelectorAll('[data-nav]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.nav === name)));
-    $('nav-results').replaceChildren(); $('nav-caption').textContent = {outline:'阅读目录',search:'全文搜索',bookmarks:'我的书签'}[name];
-    if (name === 'outline') state.nodes.forEach(n => $('nav-results').append(nodeButton(n)));
+    $('nav-results').replaceChildren();
+    if (name === 'outline') { updateTocFromScroll(); renderOutline(); }
     if (name === 'search') $('search-input').focus();
     if (name === 'bookmarks') {
         const data = await api(base + '/bookmarks');
@@ -63,8 +112,27 @@ function currentPosition() {
     const p = state.paragraphs[visible ? Number(visible.dataset.pi) : 0];
     return p ? {chapter_idx: state.chapter, paragraph_index: p.paragraph_index, fingerprint: p.fingerprint, quote: p.text} : null;
 }
-async function goto(ci, pi = 0, updateHistory = true) {
+// 与 backend/reader/auxiliary_reading.needs_semantic 保持同一判据：
+// 太短、没有句末标点、或像标题/目录行的段落不显示“生成段落解释”。
+function needsSemanticNote(text) {
+    const raw = (text || '').trim();
+    const normalized = raw.normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+    if (normalized.length < 25) return false;
+    const term = /[\u4e00-\u9fff]/.test(raw) ? /[。！？]/ : /[.!?]/;
+    if (!term.test(raw)) return false;
+    const heading = /^(?:[\[［【(（]?第[一二三四五六七八九十百零两0-9]+[章节篇部分卷]|[一二三四五六七八九十]+[、．.]|[0-9]+[、．.)）])/;
+    if (normalized.length <= 60 && heading.test(normalized)) return false;
+    return true;
+}
+function jumpReaderScroll(top) {
+    const scroller = $('reader-scroll'), previous = scroller.style.scrollBehavior;
+    scroller.style.scrollBehavior = 'auto';
+    scroller.scrollTop = top;
+    scroller.style.scrollBehavior = previous;
+}
+async function goto(ci, pi = 0, updateHistory = true, edge = 'top') {
     if (ci < 0 || ci >= cfg.total) return;
+    const chapterChanged = ci !== state.chapter;
     const version = ++state.generation;
     $('chapter-content').setAttribute('aria-busy', 'true');
     const data = await api(base + '/chapter/' + ci);
@@ -72,54 +140,89 @@ async function goto(ci, pi = 0, updateHistory = true) {
     state.chapter = ci; state.paragraphs = data.paragraphs;
     $('chapter-title').textContent = data.title; $('chapter-counter').textContent = (ci + 1) + ' / ' + data.total + ' 章';
     $('previous').disabled = ci === 0; $('next').disabled = ci + 1 === data.total;
-    const fragment = document.createDocumentFragment();
+    const fragment = document.createDocumentFragment(), titleKey = data.title.replace(/\s+/g, '');
     data.paragraphs.forEach(p => {
         const row = el('section', 'paragraph-row'), source = el('div', 'source');
         source.dataset.pi = p.paragraph_index; source.id = 'paragraph-' + p.paragraph_index; source.tabIndex = -1;
-        if (p.paragraph_index === 0 && /^h[1-6]$/.test(p.tag) && p.text.trim() === data.title.trim()) row.classList.add('chapter-heading-row');
+        if (p.paragraph_index === 0 && p.text.replace(/\s+/g, '') === titleKey) row.classList.add('chapter-heading-row');
         const tag = /^h[1-6]$/.test(p.tag) ? p.tag : p.tag === 'blockquote' ? 'blockquote' : 'p';
         const inner = el(tag); inner.innerHTML = DOMPurify.sanitize(p.html); source.append(inner);
         source.querySelectorAll('img').forEach(image => { const src = image.getAttribute('src'); if (src && !/^(https?:|\/)/i.test(src)) image.src = '/read/' + book + '/' + src; });
         const side = el('aside', 'semantic-note'); side.setAttribute('aria-label', '段落解释');
         if (p.note) {
-            side.append(button(p.note.short || '查看解释', () => openSemantic(p), 'short'));
-            side.append(button('详细 / 逐句', () => {
-                const old = side.querySelector('.detail'); if (old) { old.remove(); return; }
-                const detail = mdBox(p.note.detail || p.note.short); detail.classList.add('detail');
-                if (p.note.sentences?.length) {
-                    detail.append(el('h4', '', '逐句解释')); p.note.sentences.forEach((s, index) => { detail.append(mdBox((index + 1) + '. ' + s)); });
-                }
-                side.append(detail);
-            }));
-        } else if (p.text.length >= 25) side.append(button('生成段落解释', () => generate({layer:'L3', paragraph_ref:{chapter_idx:ci, paragraph_index:p.paragraph_index, fingerprint:p.fingerprint}, spec_type:$('agent-spec').value})));
-        side.append(button('编辑', () => openSemantic(p))); row.append(source, side); fragment.append(row);
+            side.append(el('div', 'short', p.note.short || '查看解释'));
+            side.append(button('详细 / 逐句', () => openSemantic(p)));
+        } else if (needsSemanticNote(p.text)) side.append(button('生成段落解释', () => generate({layer:'L3', paragraph_ref:{chapter_idx:ci, paragraph_index:p.paragraph_index, fingerprint:p.fingerprint}, spec_type:$('agent-spec').value})));
+        row.append(source, side); fragment.append(row);
     });
     data.images.forEach(markup => { const holder = el('div'); holder.innerHTML = DOMPurify.sanitize(markup); holder.querySelectorAll('img').forEach(img => { img.classList.add('book-image'); const src = img.getAttribute('src'); if (src && !/^(https?:|\/)/i.test(src)) img.src = '/read/' + book + '/' + src; }); fragment.append(holder); });
     $('chapter-content').replaceChildren(fragment); $('chapter-content').setAttribute('aria-busy', 'false');
-    if (state.nav === 'outline') nav('outline');
-    $('reader-scroll').scrollTop = 0;
+    const landingAtBottom = chapterChanged && pi === 0 && edge === 'bottom';
+    if (chapterChanged) jumpReaderScroll(landingAtBottom ? $('reader-scroll').scrollHeight : 0);
+    else $('reader-scroll').scrollTop = 0;
+    const landingPi = landingAtBottom ? (currentPosition()?.paragraph_index ?? 0) : pi;
+    updateTocActive(landingPi);
     if (pi > 0 && state.paragraphs[pi]) locate(pi);
-    if (updateHistory && !cfg.noteMode) history.replaceState({}, '', '/read/' + book + '/' + ci + '#source=' + ci + ':' + pi);
+    if (updateHistory && !cfg.noteMode) history.replaceState({}, '', '/read/' + book + '/' + ci + '#source=' + ci + ':' + landingPi);
     clearTimeout(progressTimer); const ref = currentPosition(); if (ref) api(base + '/state', ref, 'PUT').catch(e => toast(e.message));
 }
-function locate(pi) { const target = $('paragraph-' + pi); if (!target) return; target.scrollIntoView({block: 'start'}); document.querySelectorAll('.located').forEach(n => n.classList.remove('located')); target.classList.add('located'); setTimeout(() => target.classList.remove('located'), 2600); }
+function locate(pi) {
+    const target = $('paragraph-' + pi), scroller = $('reader-scroll');
+    if (!target) return;
+    const top = scroller.scrollTop + target.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    scroller.scrollTo({top, behavior: 'smooth'});
+    document.querySelectorAll('.located').forEach(n => n.classList.remove('located')); target.classList.add('located'); setTimeout(() => target.classList.remove('located'), 2600);
+}
 async function jumpReference(ref) { const r = await api(base + '/reference/check', {references:[ref]}); const valid = r.items[0]; await goto(valid.chapter_idx, valid.paragraph_index); }
 async function openNote(layer, target = {}) {
-    if (!canLeaveNote()) return;
+    if (!canLeaveNote()) return null;
     const id = ++noteRequest;
     const data = await api(base + '/note/read', {layer, target});
-    if (id !== noteRequest) return;
-    state.note = data; state.dirty = false; state.editing = false; $('note-layer').value = layer; $('note-editor').value = data.content;
+    if (id !== noteRequest) return null;
+    state.note = data; state.dirty = false; state.editing = false; state.noteSentences = []; setNoteLayerUI(layer); $('note-editor').value = data.content;
     $('note-target').textContent = layer === 'L1' ? cfg.title : layer === 'chat' ? '对话摘记' : (state.nodes.find(n => n.id === 'c' + target.chapter_idx)?.title || '') + (target.paragraph_index !== undefined ? ' · 段落 ' + (target.paragraph_index + 1) : '') + (target.term ? ' · ' + target.term : '');
     $('note-save-state').textContent = ''; $('generate-note').disabled = layer === 'chat'; renderNote(); panel('note');
+    return data;
 }
-function openSemantic(p) { return openNote('L3', {chapter_idx:state.chapter, paragraph_index:p.paragraph_index, fingerprint:p.fingerprint}); }
-function renderNote() { $('note-editor').hidden = !state.editing; $('note-preview').hidden = state.editing; $('note-preview').innerHTML = renderMarkdown($('note-editor').value); $('edit-note').textContent = state.editing ? '预览' : '编辑'; $('edit-note').setAttribute('aria-pressed', String(state.editing)); }
+function setNoteLayerUI(layer) {
+    document.querySelectorAll('[data-note-layer]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.noteLayer === layer)));
+}
+async function openSemantic(p) {
+    const target = {chapter_idx:state.chapter, paragraph_index:p.paragraph_index, fingerprint:p.fingerprint};
+    const data = await openNote('L3', target);
+    if (!data || data.target.chapter_idx !== target.chapter_idx || data.target.paragraph_index !== target.paragraph_index) return;
+    state.noteSentences = p.note?.sentences || [];
+    renderNote();
+}
+async function openNoteLayer(layer) {
+    if (layer === 'L1') return openNote(layer);
+    if (layer === 'L2') return openNote(layer, {chapter_idx:state.chapter});
+    const ref = state.selected[0] || currentPosition(); if (!ref) return;
+    const target = {chapter_idx:ref.chapter_idx, paragraph_index:ref.paragraph_index, fingerprint:ref.fingerprint};
+    if (layer === 'L4') { const term = state.selected[0]?.quote || prompt('输入当前位置要解释的术语'); if (!term) return; target.term = term; }
+    const data = await openNote(layer, target);
+    if (layer === 'L3' && data) {
+        const p = state.paragraphs.find(x => x.paragraph_index === target.paragraph_index);
+        state.noteSentences = p?.note?.sentences || [];
+        renderNote();
+    }
+}
+function renderNote() {
+    const editing = state.editing;
+    $('note-editor').hidden = !editing; $('note-preview').hidden = editing;
+    $('edit-note').hidden = editing; $('save-note').hidden = !editing;
+    const preview = $('note-preview');
+    preview.innerHTML = renderMarkdown($('note-editor').value);
+    if (state.note?.layer === 'L3' && state.noteSentences?.length) {
+        preview.append(el('h4', '', '逐句解释'));
+        state.noteSentences.forEach((s, index) => preview.append(mdBox((index + 1) + '. ' + s)));
+    }
+}
 async function saveNote() {
     if (!state.note) return;
     try {
         const data = await api(base + '/note', {layer:state.note.layer, target:state.note.target, content:$('note-editor').value, baseline:baseline(state.note)}, 'PUT');
-        state.note = data; state.dirty = false; $('note-save-state').textContent = '已保存'; toast('笔记已保存');
+        state.note = data; state.dirty = false; state.editing = false; $('note-save-state').textContent = '已保存'; toast('笔记已保存'); renderNote();
     } catch (e) {
         if (e.status === 409) { $('note-save-state').textContent = '保存冲突 · 输入已保留'; download($('note-editor').value, '冲突笔记备份.md'); }
         throw e;
@@ -303,12 +406,13 @@ function captureSelection() {
     state.selected=refs;const rect=range.getBoundingClientRect(),box=$('selection-actions');box.hidden=false;box.style.top=Math.min(window.innerHeight-50,Math.max(70,rect.bottom+8))+'px';box.style.left=Math.min(window.innerWidth-300,Math.max(8,rect.left))+'px';
 }
 const SIDEBARS = {
-    nav: {panel:'navigation',handle:'nav-resize',css:'--nav-width',min:170,store:'gnosys-navigation-width',cls:'no-navigation',toggle:'toggle-nav'},
-    inspector: {panel:'inspector',handle:'panel-resize',css:'--panel-width',min:240,store:'gnosys-inspector-width',cls:'no-inspector',toggle:'toggle-panel'}
+    nav: {panel:'navigation',handle:'nav-resize',css:'--nav-width',store:'gnosys-navigation-width',cls:'no-navigation',toggle:'toggle-nav'},
+    inspector: {panel:'inspector',handle:'panel-resize',css:'--panel-width',store:'gnosys-inspector-width',cls:'no-inspector',toggle:'toggle-panel'}
 };
 const READING_MIN_WIDTH = 320;
 const sidebarWidths = {nav:0, inspector:0};
 function pageWidth() { return document.documentElement.clientWidth || window.innerWidth; }
+function sidebarMinWidth() { return Math.max(1,Math.ceil(pageWidth()/50)); }
 function sidebarMaxWidth() {
     const page=pageWidth();
     // 硬上限：页宽 1/3；同时给中间阅读区留出最小宽度，避免三栏挤爆。
@@ -316,19 +420,19 @@ function sidebarMaxWidth() {
 }
 function applySidebarWidth(kind,width,persist) {
     const cfg=SIDEBARS[kind],panel=$(cfg.panel);if(!panel)return 0;
-    const max=sidebarMaxWidth();if(max<=cfg.min)return 0;
-    const value=Math.max(cfg.min,Math.min(max,Math.round(width)));
+    const min=sidebarMinWidth(),max=sidebarMaxWidth();if(max<=min)return 0;
+    const value=Math.max(min,Math.min(max,Math.round(width)));
     document.documentElement.style.setProperty(cfg.css,value+'px');sidebarWidths[kind]=value;
     const handle=$(cfg.handle);
-    if(handle){handle.setAttribute('aria-valuemin',String(cfg.min));handle.setAttribute('aria-valuemax',String(max));handle.setAttribute('aria-valuenow',String(value));}
+    if(handle){handle.setAttribute('aria-valuemin',String(min));handle.setAttribute('aria-valuemax',String(max));handle.setAttribute('aria-valuenow',String(value));}
     if(persist)localStorage.setItem(cfg.store,String(value));
     return value;
 }
 function syncSidebarHandles() {
-    const max=sidebarMaxWidth(),mobile=pageWidth()<=800;
+    const min=sidebarMinWidth(),max=sidebarMaxWidth(),mobile=pageWidth()<=800;
     for(const kind of Object.keys(SIDEBARS)){
         const cfg=SIDEBARS[kind],handle=$(cfg.handle),panel=$(cfg.panel);if(!handle||!panel)continue;
-        const enabled=!mobile&&max>cfg.min;handle.hidden=!enabled;if(!enabled)continue;
+        const enabled=!mobile&&max>min;handle.hidden=!enabled;if(!enabled)continue;
         if(!document.body.classList.contains(cfg.cls)){
             const width=sidebarWidths[kind]||panel.getBoundingClientRect().width;
             applySidebarWidth(kind,width,false);
@@ -352,7 +456,7 @@ function setSidebarVisible(kind,visible) {
 function toggleSidebar(kind) { const cfg=SIDEBARS[kind];setSidebarVisible(kind,document.body.classList.contains(cfg.cls)); }
 function startSidebarDrag(kind,event) {
     const cfg=SIDEBARS[kind],panel=$(cfg.panel);if(!panel||event.button!==0||pageWidth()<=800)return;
-    const max=sidebarMaxWidth();if(max<=cfg.min)return;
+    const min=sidebarMinWidth(),max=sidebarMaxWidth();if(max<=min)return;
     event.preventDefault();
     const startX=event.clientX,startWidth=panel.getBoundingClientRect().width,direction=kind==='nav'?1:-1;
     let done=false;
@@ -365,7 +469,7 @@ function startSidebarDrag(kind,event) {
     const move=ev=>{
         if(done)return;
         const width=startWidth+(ev.clientX-startX)*direction;
-        if(width<cfg.min){finish(false);setSidebarVisible(kind,false);return;}
+        if(width<min){finish(false);setSidebarVisible(kind,false);return;}
         applySidebarWidth(kind,width,false);
     };
     const up=()=>finish(true);
@@ -382,10 +486,10 @@ function initSidebars() {
         handle.addEventListener('keydown',e=>{
             if(!['ArrowLeft','ArrowRight'].includes(e.key))return;
             e.preventDefault();
-            const current=panel.getBoundingClientRect().width;
+            const current=panel.getBoundingClientRect().width,min=sidebarMinWidth();
             const grow=kind==='nav'?(e.key==='ArrowRight'?1:-1):(e.key==='ArrowLeft'?1:-1);
             const next=current+grow*16;
-            if(next<cfg.min){setSidebarVisible(kind,false);return;}
+            if(next<min){setSidebarVisible(kind,false);return;}
             applySidebarWidth(kind,next,true);
         });
     }
@@ -393,19 +497,53 @@ function initSidebars() {
     syncSidebarHandles();
 }
 // Shared navigation for evidence links emitted by the model and generated notes.
-document.addEventListener('click',e=>{const a=e.target.closest('a');if(!a)return;const match=(a.getAttribute('href')||'').match(/^#source=(\d+):(\d+)$/);if(match){e.preventDefault();goto(Number(match[1]),Number(match[2])).catch(err=>toast(err.message));}});
+document.addEventListener('click',e=>{
+    const a=e.target.closest('a');if(!a)return;
+    const href=a.getAttribute('href')||'';
+    const match=href.match(/^#source=(\d+):(\d+)$/);
+    if(match){e.preventDefault();goto(Number(match[1]),Number(match[2])).catch(err=>toast(err.message));return;}
+    if(!a.closest('#chapter-content')||!href.includes('#'))return;
+    const raw=href.slice(href.indexOf('#')+1);
+    let anchor=raw;try{anchor=decodeURIComponent(raw);}catch(e){}
+    const ci=cfg.anchorMap?.[anchor];
+    if(!Number.isInteger(ci))return;
+    e.preventDefault();
+    jumpToAnchor(ci,anchor).catch(err=>toast(err.message));
+});
+async function jumpToAnchor(ci,anchor){
+    await goto(ci,0,true);
+    const target=document.getElementById(anchor);if(!target)return;
+    const source=target.closest('.source');
+    if(source){source.classList.add('located');setTimeout(()=>source.classList.remove('located'),2600);}
+    const scroller=$('reader-scroll');
+    const top=scroller.scrollTop+target.getBoundingClientRect().top-scroller.getBoundingClientRect().top;
+    scroller.scrollTo({top,behavior:'smooth'});
+}
 document.querySelectorAll('[data-panel]').forEach(b=>b.onclick=()=>panel(b.dataset.panel));document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>nav(b.dataset.nav).catch(e=>toast(e.message)));
 on('toggle-nav','click',()=>toggleSidebar('nav'));
 on('toggle-panel','click',()=>toggleSidebar('inspector'));
 on('previous','click',()=>goto(state.chapter-1));on('next','click',()=>goto(state.chapter+1));
 on('search-form','submit',async e=>{e.preventDefault();const q=$('search-input').value.trim();if(!q)return;const data=await api(base+'/search?q='+encodeURIComponent(q));$('nav-results').replaceChildren();data.items.forEach(item=>{const row=el('div','search-result');row.append(button(item.title,()=>goto(item.chapter_idx,item.paragraph_index)),el('small','',item.excerpt));$('nav-results').append(row);});if(!data.items.length)$('nav-results').append(el('p','muted','没有找到匹配文字'));if(data.truncated)$('nav-results').append(el('p','muted','结果较多，请缩小搜索范围'));});
 on('add-bookmark','click',async()=>{const ref=currentPosition();if(ref){await api(base+'/bookmarks',{reference:ref,label:ref.quote.slice(0,50)});toast('已添加书签');}});
-on('reader-scroll','scroll',()=>{clearTimeout(progressTimer);progressTimer=setTimeout(()=>{const ref=currentPosition();if(ref)api(base+'/state',ref,'PUT').catch(e=>toast(e.message));},500);});
-on('open-book-note','click',()=>openNote('L1'));on('open-chapter-note','click',()=>openNote('L2',{chapter_idx:state.chapter}));
+on('reader-scroll','scroll',()=>{
+    clearTimeout(tocTimer);tocTimer=setTimeout(updateTocFromScroll,80);
+    clearTimeout(progressTimer);progressTimer=setTimeout(()=>{const ref=currentPosition();if(ref)api(base+'/state',ref,'PUT').catch(e=>toast(e.message));},500);
+});
+{
+    const scroller=$('reader-scroll');
+    scroller.addEventListener('wheel',e=>{
+        if(state.chapterNavLock)return;
+        const atTop=scroller.scrollTop<=4,atBottom=scroller.scrollTop+scroller.clientHeight>=scroller.scrollHeight-4;
+        const target=e.deltaY>0?(atBottom&&state.chapter<cfg.total-1?state.chapter+1:null):(atTop&&state.chapter>0?state.chapter-1:null);
+        if(target===null)return;
+        state.chapterNavLock=true;
+        goto(target,0,true,e.deltaY<0?'bottom':'top').catch(err=>toast(err.message)).finally(()=>setTimeout(()=>state.chapterNavLock=false,400));
+    },{passive:true});
+}
 on('generate-semantic','click',()=>generate({layer:'L3',chapter_idx:state.chapter,mode:'fill_missing',spec_type:$('agent-spec').value}));
-on('show-semantic','change',()=>document.body.classList.toggle('hide-semantic',!$('show-semantic').checked));
-on('note-layer','change',()=>{const layer=$('note-layer').value;if(layer==='L1')return openNote(layer);if(layer==='L2')return openNote(layer,{chapter_idx:state.chapter});const ref=state.selected[0]||currentPosition();if(!ref)return;const target={chapter_idx:ref.chapter_idx,paragraph_index:ref.paragraph_index,fingerprint:ref.fingerprint};if(layer==='L4'){const term=state.selected[0]?.quote || prompt('输入当前位置要解释的术语');if(!term)return;target.term=term;}return openNote(layer,target);});
-on('edit-note','click',()=>{state.editing=!state.editing;renderNote();if(state.editing)$('note-editor').focus();});
+on('toggle-semantic-rail','click',()=>setSemanticVisible(document.body.classList.contains('hide-semantic')));
+document.querySelectorAll('[data-note-layer]').forEach(b => b.onclick = () => openNoteLayer(b.dataset.noteLayer).catch(e => toast(e.message)));
+on('edit-note','click',()=>{state.editing=true;renderNote();$('note-editor').focus();});
 on('note-editor','input',()=>{state.dirty=true;$('note-save-state').textContent='未保存';});on('save-note','click',saveNote);
 on('export-note','click',()=>download($('note-editor').value,(state.note?.key||'笔记')+'.md'));
 on('generate-note','click',async()=>{if(!state.note)return;if(state.dirty){toast('请先保存当前笔记，再生成 AI 候选稿');return;}const n=state.note;if(n.layer==='L3')await generate({layer:'L3',paragraph_ref:n.target,mode:'overwrite',spec_type:$('agent-spec').value});else await generate({layer:n.layer,target:n.target,spec_type:$('agent-spec').value});});
@@ -435,7 +573,54 @@ on('selection-concept','click',async()=>{
     }
 });
 window.addEventListener('beforeunload',e=>{if(state.dirty){e.preventDefault();e.returnValue='';}});
-for(const [id,css,fallback] of [['font-size','--reading-size','18'],['line-height','--reading-line','1.9']]){const value=localStorage.getItem('gnosys-'+id)||fallback;$(id).value=value;document.documentElement.style.setProperty(css,value+(id==='font-size'?'px':''));on(id,'change',()=>{localStorage.setItem('gnosys-'+id,$(id).value);document.documentElement.style.setProperty(css,$(id).value+(id==='font-size'?'px':''));});}
-async function init(){initSidebars();if(innerWidth<=800){document.body.classList.add('no-navigation','no-inspector');$('toggle-nav').setAttribute('aria-expanded','false');$('toggle-panel').setAttribute('aria-expanded','false');}const data=await api(base+'/outline');state.nodes=data.items;await nav('outline');const match=location.hash.match(/source=(\d+):(\d+)/);await goto(match?Number(match[1]):state.chapter,match?Number(match[2]):0,false);await sessions();if(cfg.noteMode)await openNote('L1');window.GNOSYS.ready=true;}
+function initReadingCycles(){
+    const closeMenus=()=>document.querySelectorAll('.reading-pref.open').forEach(wrap=>{
+        wrap.classList.remove('open');
+        wrap.querySelector('.reading-pref-button')?.setAttribute('aria-expanded','false');
+    });
+    const controls=[
+        {id:'font-size-cycle',key:'font-size',css:'--reading-size',values:['16','18','20','22','24'],fallback:'18',unit:'px',label:'字号',format:v=>v+'px'},
+        {id:'line-height-cycle',key:'line-height',css:'--reading-line',values:['1.6','1.9','2.2'],fallback:'1.9',unit:'',label:'行距',format:v=>v}
+    ];
+    controls.forEach(cfg=>{
+        const btn=$(cfg.id);if(!btn)return;
+        const wrap=btn.closest('.reading-pref'),menu=wrap?.querySelector('.reading-pref-menu');
+        if(!wrap||!menu)return;
+        let value=localStorage.getItem('gnosys-'+cfg.key)||cfg.fallback;
+        if(!cfg.values.includes(value))value=cfg.fallback;
+        const options=new Map();
+        const apply=v=>{
+            value=v;localStorage.setItem('gnosys-'+cfg.key,v);
+            document.documentElement.style.setProperty(cfg.css,v+cfg.unit);
+            btn.textContent=cfg.label+' '+cfg.format(v);
+            btn.title=cfg.label+'：'+cfg.format(v);
+            btn.setAttribute('aria-label',cfg.label+'：'+cfg.format(v));
+            options.forEach((opt,val)=>opt.setAttribute('aria-selected',String(val===v)));
+        };
+        cfg.values.forEach(v=>{
+            const opt=el('button','reading-pref-option',cfg.format(v));opt.type='button';
+            opt.setAttribute('role','option');opt.dataset.value=v;
+            opt.onclick=e=>{e.stopPropagation();apply(v);closeMenus();btn.focus();};
+            options.set(v,opt);menu.append(opt);
+        });
+        apply(value);
+        btn.onclick=e=>{
+            e.stopPropagation();
+            const wasOpen=wrap.classList.contains('open');
+            closeMenus();
+            if(!wasOpen){wrap.classList.add('open');btn.setAttribute('aria-expanded','true');}
+        };
+    });
+    document.addEventListener('click',closeMenus);
+    document.addEventListener('keydown',e=>{if(e.key==='Escape')closeMenus();});
+}
+function setSemanticVisible(visible){
+    document.body.classList.toggle('hide-semantic',!visible);
+    const btn=$('toggle-semantic-rail');
+    if(btn){btn.setAttribute('aria-pressed',String(visible));btn.title='段落旁注：'+(visible?'开':'关');btn.setAttribute('aria-label','段落旁注：'+(visible?'开':'关'));}
+}
+initReadingCycles();
+setSemanticVisible(true);
+async function init(){const settingsLink=$('open-settings');if(settingsLink)settingsLink.href='/settings?from='+encodeURIComponent(location.pathname+location.search+location.hash);initSidebars();if(innerWidth<=800){document.body.classList.add('no-navigation','no-inspector');$('toggle-nav').setAttribute('aria-expanded','false');$('toggle-panel').setAttribute('aria-expanded','false');}const data=await api(base+'/outline');state.nodes=data.items;await nav('outline');const match=location.hash.match(/source=(\d+):(\d+)/);await goto(match?Number(match[1]):state.chapter,match?Number(match[2]):0,false);await sessions();if(cfg.noteMode)await openNote('L1');window.GNOSYS.ready=true;}
 init().catch(e=>toast(e.message));
 })();

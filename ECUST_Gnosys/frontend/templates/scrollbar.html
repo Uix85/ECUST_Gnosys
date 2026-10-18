@@ -1,26 +1,27 @@
 {# ═══════════════════════════════════════════════
-   VSCode 风格滚动条（全局）：灰色圆角矩形 thumb、透明轨道，
-   滚动中显示，停止滚动 ~0.9s 后隐藏（监听捕获级 scroll 事件）
+   全局滚动条：6px 蓝灰圆角滑块、透明轨道；
+   滚动时显示，停止滚动约 0.8s 后自动隐藏。
    ═══════════════════════════════════════════════ #}
 <style>
-    ::-webkit-scrollbar { width:10px; height:10px; }
-    ::-webkit-scrollbar-track { background:transparent; }
-    ::-webkit-scrollbar-corner { background:transparent; }
-    ::-webkit-scrollbar-thumb { background:transparent; border-radius:5px; border:2px solid transparent; background-clip:padding-box; }
-    ::-webkit-scrollbar-thumb:hover { background:rgba(121,121,121,.6); background-clip:padding-box; }
-    /* 滚动中：显示 thumb（.scrolling 由下方 JS 在 scroll 时挂到滚动容器上） */
-    .scrolling::-webkit-scrollbar-thumb { background:rgba(121,121,121,.45); background-clip:padding-box; }
-    .scrolling::-webkit-scrollbar-thumb:hover { background:rgba(121,121,121,.6); background-clip:padding-box; }
-    /* Firefox */
-    * { scrollbar-width:thin; scrollbar-color:transparent transparent; }
-    .scrolling { scrollbar-color:rgba(121,121,121,.45) transparent; }
+    :root{--sb-thumb:rgba(111,137,171,.62);--sb-thumb-hover:rgba(82,112,150,.78)}
+    *::-webkit-scrollbar { width:6px; height:6px; }
+    *::-webkit-scrollbar-track { background:transparent; }
+    *::-webkit-scrollbar-corner { background:transparent; }
+    *::-webkit-scrollbar-button { display:none; }
+    *::-webkit-scrollbar-thumb { background:transparent; border-radius:999px; }
+    .scrolling::-webkit-scrollbar-thumb { background:var(--sb-thumb); }
+    .scrolling::-webkit-scrollbar-thumb:hover { background:var(--sb-thumb-hover); }
+    @supports not selector(::-webkit-scrollbar) {
+        * { scrollbar-width:thin; scrollbar-color:transparent transparent; }
+        .scrolling { scrollbar-color:var(--sb-thumb) transparent; }
+    }
 </style>
 <script>
 (function() {
-    var HIDE_DELAY = 900;
+    var HIDE_DELAY = 800;
     document.addEventListener('scroll', function(e) {
-        var t = e.target;
-        if (!t || t.nodeType !== 1) return;              // 仅元素容器（document 级滚动不处理）
+        var t = e.target === document ? document.scrollingElement : e.target;
+        if (!t || t.nodeType !== 1) return;
         t.classList.add('scrolling');
         clearTimeout(t._sbHide);
         t._sbHide = setTimeout(function() { t.classList.remove('scrolling'); }, HIDE_DELAY);
