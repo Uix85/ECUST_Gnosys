@@ -16,14 +16,17 @@ BLOCK_TAGS = ("p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote"
 
 
 def normalize_text(text: str) -> str:
+    """NFKC 归一化并去掉所有空白、转小写，作为比较/指纹的统一口径。"""
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", text or "")).lower()
 
 
 def fingerprint(text: str) -> str:
+    """段落内容指纹（sha256），用于把注释绑定到“这一版文字”而不是段号。"""
     return hashlib.sha256(normalize_text(text).encode("utf-8")).hexdigest()
 
 
 def text_hash(text: str) -> str:
+    """历史 semantic_layer 表使用的 md5 文本哈希（与 fingerprint 算法不同，勿混用）。"""
     return hashlib.md5(normalize_text(text).encode("utf-8")).hexdigest()
 
 
@@ -72,6 +75,7 @@ def split_sentences(text: str) -> list[str]:
 
 
 def book_db(book_id: str):
+    """打开指定书籍的 SQLite；book_id 只允许 `*_data` 形式，防止路径穿越。"""
     safe = os.path.basename(book_id)
     if safe != book_id or not safe.endswith("_data"):
         raise HTTPException(status_code=404, detail="Book not found")
@@ -82,6 +86,7 @@ def book_db(book_id: str):
 
 
 def chapter_html(book_id: str, chapter_idx: int):
+    """回退路径：通过渲染管线取某章 HTML 与章节元数据（含总章数）。"""
     # Import lazily to avoid a cycle with the application router.
     from api.server import _get_chapter_slice
     from reader.book_service import load_book_cached
@@ -106,6 +111,7 @@ def paragraph_blocks(html: str) -> list[dict]:
         nodes = []
 
         def flush():
+            """把当前累积的行内节点输出为一个段落；空/纯空白段落丢弃。"""
             if not nodes:
                 return
             text = "".join(
@@ -163,6 +169,7 @@ def logical_paragraphs(book_id: str, chapter_idx: int) -> tuple[dict, list[dict]
 
 
 def get_paragraph(book_id: str, chapter_idx: int, paragraph_index: int) -> dict:
+    """按逻辑段号取段落，附带章标题与前后段文本（用于拼上下文）。"""
     chapter, paragraphs, _ = logical_paragraphs(book_id, chapter_idx)
     if paragraph_index < 0 or paragraph_index >= len(paragraphs):
         raise HTTPException(status_code=404, detail="Paragraph not found")
@@ -199,12 +206,20 @@ def find_by_fingerprint(book_id: str, fp: str) -> list[dict]:
 
 
 def semantic_needed(text: str) -> bool:
+    """判断该段是否需要语义级解释（规则由 reader.auxiliary_reading 统一提供）。"""
     from reader.auxiliary_reading import needs_semantic
 
     return needs_semantic(text)
 
 
 def current_baseline(db, chapter_idx: int, para: dict) -> dict:
+    """取某段落当前“已有解释”的基线，供采纳时做并发修改校验。
+
+    返回三个来源（互不覆盖，可能同时存在）：
+    * workspace：读者手写注释（workspace_notes，按 L3:{章}:{段} 键）；
+    * agent：最新一条 published/accepted 的 agent 笔记（按内容指纹匹配）；
+    * legacy：旧 semantic_layer 中的解释（按 md5 text_hash 匹配）。
+    """
     row = db.execute(
         "SELECT id, short, detail, sentences, state, updated_at FROM agent_notes "
         "WHERE chapter_idx=? AND paragraph_index=? AND fingerprint=? AND state IN ('published','accepted') "
@@ -225,6 +240,11 @@ def current_baseline(db, chapter_idx: int, para: dict) -> dict:
 
 
 def list_paragraph_notes(book_id: str, chapter_idx: int) -> list[dict]:
+    """按段落顺序列出某章已有解释。
+
+    每段优先取最新一条 published/accepted 的 agent 笔记；没有时回退到旧的
+    semantic_layer（kind='para'），并以 origin 标记来源（agent / legacy）。
+    """
     db = book_db(book_id)
     _, paragraphs, _ = logical_paragraphs(book_id, chapter_idx)
     notes = []
@@ -273,6 +293,10 @@ def list_paragraph_notes(book_id: str, chapter_idx: int) -> list[dict]:
 
 
 def invalidate_generated_notes(db, text: str) -> int:
+    """正文变更后作废该内容指纹下仍有效的生成注释，返回受影响行数。
+
+    只作废 published/accepted/pending：superseded 已是终态，无需重复处理。
+    """
     h = fingerprint(text)
     cur = db.execute(
         "UPDATE agent_notes SET state='superseded' WHERE fingerprint=? AND state IN ('published','accepted','pending')",

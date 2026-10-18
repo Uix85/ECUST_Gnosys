@@ -9,7 +9,7 @@ os.environ['GNOSYS_BOOKS_DIR'] = sys.argv[1]
 os.environ['AGENT_API_KEY'] = 'offline-test-key'
 
 from server import app
-from agent import chat
+from agent.runs import chat
 from fake_model import ReadingModel
 
 chat.build_model = lambda _config: ReadingModel(delay=0.04)

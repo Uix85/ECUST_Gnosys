@@ -11,6 +11,7 @@ SECRETS_FILE = ROOT_DIR / ".env.secrets"
 
 
 def _read_env(path: Path) -> dict[str, str]:
+    """解析 KEY=VALUE 形式的 env 文件；忽略空行与 # 注释，去掉包裹的引号。"""
     values = {}
     if not path.is_file():
         return values
@@ -33,6 +34,8 @@ def _merged_values() -> dict[str, str]:
 
 @dataclass(frozen=True)
 class AgentConfig:
+    """运行期只读配置；由 load_config 从合并后的环境值构造。"""
+
     base_url: str
     model: str
     api_key: str
@@ -47,6 +50,7 @@ class AgentConfig:
 
 
 def load_config() -> AgentConfig:
+    """读取合并后的环境值并构造 AgentConfig；所有缺省值集中在这里。"""
     values = _merged_values()
     return AgentConfig(
         base_url=values.get("AGENT_API_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
@@ -67,6 +71,12 @@ def load_config() -> AgentConfig:
 
 @dataclass(frozen=True)
 class EnvField:
+    """设置页可编辑项。
+
+    `kind` 决定校验与前端控件类型（text / int / float / url / bool / secret）；
+    `secret` 决定写入哪个文件（.env.secrets）以及快照中是否回显明文。
+    """
+
     key: str
     label: str
     default: str
@@ -93,6 +103,7 @@ FIELD_BY_KEY = {field.key: field for field in FIELDS}
 
 
 def _file_for(field: EnvField) -> Path:
+    """密钥类键写 .env.secrets，其余写 .env。"""
     return SECRETS_FILE if field.secret else ENV_FILE
 
 
@@ -108,6 +119,7 @@ def _source_of(key: str) -> str:
 
 
 def _normalize(field: EnvField, raw: str) -> str:
+    """按 kind 校验并规范化输入值；非法值抛 ValueError（消息会直接展示给用户）。"""
     value = (raw or "").strip()
     if field.kind == "int":
         if not value.isdigit() or int(value) < 1:
@@ -167,7 +179,11 @@ def _write_fields(values: dict[str, str]) -> list[str]:
 
 
 def settings_snapshot() -> dict:
-    """设置页用：可编辑项 + 生效值 + 来源 + 被进程环境覆盖的键。密钥不回传明文。"""
+    """设置页用：可编辑项 + 生效值 + 来源 + 被进程环境覆盖的键。密钥不回传明文。
+
+    来源优先级与 _merged_values 一致；`overridden` 列出被进程环境覆盖、因此
+    在页面上改文件也不生效的键（API 密钥除外，避免泄露其来源）。
+    """
     merged = _merged_values()
     items, overridden = [], []
     for field in FIELDS:
@@ -190,7 +206,10 @@ def settings_snapshot() -> dict:
 
 
 def save_settings(values: dict) -> dict:
-    """校验并落盘。密钥留空 = 不改；其它键写 .env。返回新的快照。"""
+    """校验并落盘。密钥留空 = 不改；其它键写 .env。返回新的快照。
+
+    未知键直接忽略；所有值先经 _normalize 校验，任一非法即整体失败、不写盘。
+    """
     if not isinstance(values, dict):
         raise ValueError("values 必须是对象")
     updates = {}

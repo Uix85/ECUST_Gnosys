@@ -300,6 +300,42 @@ def section_context(book_id: str, chapter_idx: int, paragraph_index: int,
     }
 
 
+def material_refs(result) -> dict | None:
+    """从工具返回结果中收集材料位置引用。
+
+    递归遍历 dict/list（兼容 read_directory_node 这类分页嵌套结果），只要出现
+    `reference` 字典就按 JSON 去重后收集；完全没有引用时返回 None。
+    material_type 取第一个出现的类型，缺省视为 original_text。
+    """
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except json.JSONDecodeError:
+            return None
+    refs, seen, material_type = [], set(), None
+
+    def collect(item):
+        """递归遍历嵌套结构，收集去重后的 reference 字典。"""
+        nonlocal material_type
+        if isinstance(item, dict):
+            reference = item.get('reference')
+            if isinstance(reference, dict) and reference:
+                key = json.dumps(reference, sort_keys=True)
+                if key not in seen:
+                    seen.add(key)
+                    refs.append(reference)
+                material_type = material_type or item.get('material_type')
+            for value in item.values():
+                if isinstance(value, (dict, list)):
+                    collect(value)
+        elif isinstance(item, list):
+            for value in item:
+                collect(value)
+
+    collect(result)
+    return {'material_type': material_type or 'original_text', 'references': refs} if refs else None
+
+
 if __name__ == "__main__":                       # ponytail: 一条可运行的自检
     assert heading_level("[一、力与力的交互作用]") == 2
     assert heading_level("[Ⅰ．超感官世界]") == 3
