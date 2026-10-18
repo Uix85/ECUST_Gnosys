@@ -4,8 +4,9 @@ const cfg = window.GNOSYS, book = encodeURIComponent(cfg.bookId);
 const base = '/api/workspace/' + book, agentBase = '/api/agent/' + book + '/runs', chatBase = '/api/chat/' + book;
 const $ = id => document.getElementById(id);
 const state = {chapter: cfg.chapter, nodes: [], paragraphs: [], references: [], session: '', messages: [], activeMessage: '',
-    note: null, dirty: false, editing: false, selected: [], nav: 'outline', panel: 'chat', generation: 0};
-let chatStream, toastTimer, progressTimer, runStream, mention = null, noteRequest = 0;
+    note: null, dirty: false, editing: false, selected: [], nav: 'outline', panel: 'chat', generation: 0,
+    tocPinned: new Set(), tocClosed: new Set(), tocActive: new Set(), chapterNavLock: false};
+let chatStream, toastTimer, progressTimer, tocTimer, runStream, mention = null, noteRequest = 0;
 function toast(text) { $('toast').textContent = text; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 5500); }
 async function api(url, body, method) {
     const options = body === undefined ? {} : {method: method || 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)};
@@ -27,23 +28,66 @@ function panel(name) {
     ['chat', 'note', 'runs'].forEach(p => $(p + '-panel').hidden = p !== name);
     if (name === 'runs') refreshRuns().catch(e => toast(e.message));
 }
+function tocNode(id) { return state.nodes.find(n => n.id === id); }
+function tocHasChildren(id) { return state.nodes.some(n => n.parent_id === id); }
+function tocExpanded(id) {
+    if (state.tocClosed.has(id)) return false;
+    if (state.tocPinned.has(id)) return true;
+    return state.tocActive.has(id);
+}
+function tocVisible(node) {
+    let parentId = node.parent_id;
+    while (parentId) {
+        const parent = tocNode(parentId);
+        if (!parent || !tocExpanded(parentId)) return false;
+        parentId = parent.parent_id;
+    }
+    return true;
+}
 function nodeButton(node) {
-    const row = el('div', 'toc-row' + (node.chapter_idx === state.chapter ? ' active' : '')); row.dataset.depth = node.depth; row.dataset.id = node.id;
+    const row = el('div', 'toc-row' + (state.tocActive.has(node.id) ? ' active' : '')); row.dataset.depth = node.depth; row.dataset.id = node.id;
     row.style.paddingLeft = Math.min(node.depth, 5) * 12 + 'px';
-    if (state.nodes.some(n => n.parent_id === node.id)) {
-        const fold = button('⌄', () => {
-            const collapsed = fold.getAttribute('aria-expanded') === 'true'; fold.setAttribute('aria-expanded', String(!collapsed)); fold.textContent = collapsed ? '›' : '⌄';
-            const descendants = new Set([node.id]); state.nodes.forEach(n => { if (descendants.has(n.parent_id)) descendants.add(n.id); });
-            $('nav-results').querySelectorAll('.toc-row').forEach(r => { if (r.dataset.id !== node.id && descendants.has(r.dataset.id)) r.hidden = collapsed; });
-        }, 'toc-fold'); fold.setAttribute('aria-label', '折叠或展开 ' + node.title); fold.setAttribute('aria-expanded', 'true'); row.append(fold);
+    row.hidden = !tocVisible(node);
+    if (tocHasChildren(node.id)) {
+        const expanded = tocExpanded(node.id);
+        const fold = button(expanded ? '⌄' : '›', () => toggleToc(node.id), 'toc-fold');
+        fold.setAttribute('aria-label', '折叠或展开 ' + node.title);
+        fold.setAttribute('aria-expanded', String(expanded));
+        row.append(fold);
     } else row.append(el('span', 'toc-fold', ''));
     const link = button(node.title, () => goto(node.chapter_idx, node.paragraph_index)); link.title = node.path.join(' - '); row.append(link); return row;
+}
+function renderOutline() {
+    const box = $('nav-results'); if (!box) return;
+    const top = box.scrollTop, fragment = document.createDocumentFragment();
+    state.nodes.forEach(n => fragment.append(nodeButton(n)));
+    box.replaceChildren(fragment); box.scrollTop = top;
+}
+function toggleToc(id) {
+    if (tocExpanded(id)) { state.tocPinned.delete(id); state.tocClosed.add(id); }
+    else { state.tocClosed.delete(id); state.tocPinned.add(id); }
+    renderOutline();
+}
+function updateTocActive(pi) {
+    if (!Number.isInteger(pi)) return;
+    const next = new Set(state.nodes.filter(n => n.chapter_idx === state.chapter && n.paragraph_index <= pi && pi < n.end).map(n => n.id));
+    let same = next.size === state.tocActive.size;
+    if (same) for (const id of next) { if (!state.tocActive.has(id)) { same = false; break; } }
+    if (same) return;
+    // 进入新的章/标题区间时，清除该区间的手动固定状态，恢复自动收展。
+    for (const id of next) if (!state.tocActive.has(id)) { state.tocPinned.delete(id); state.tocClosed.delete(id); }
+    state.tocActive = next;
+    if (state.nav === 'outline') renderOutline();
+}
+function updateTocFromScroll() {
+    const ref = currentPosition();
+    if (ref) updateTocActive(ref.paragraph_index);
 }
 async function nav(name) {
     state.nav = name; $('search-form').hidden = name !== 'search';
     document.querySelectorAll('[data-nav]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.nav === name)));
     $('nav-results').replaceChildren();
-    if (name === 'outline') state.nodes.forEach(n => $('nav-results').append(nodeButton(n)));
+    if (name === 'outline') { updateTocFromScroll(); renderOutline(); }
     if (name === 'search') $('search-input').focus();
     if (name === 'bookmarks') {
         const data = await api(base + '/bookmarks');
@@ -96,7 +140,7 @@ async function goto(ci, pi = 0, updateHistory = true) {
     });
     data.images.forEach(markup => { const holder = el('div'); holder.innerHTML = DOMPurify.sanitize(markup); holder.querySelectorAll('img').forEach(img => { img.classList.add('book-image'); const src = img.getAttribute('src'); if (src && !/^(https?:|\/)/i.test(src)) img.src = '/read/' + book + '/' + src; }); fragment.append(holder); });
     $('chapter-content').replaceChildren(fragment); $('chapter-content').setAttribute('aria-busy', 'false');
-    if (state.nav === 'outline') nav('outline');
+    updateTocActive(pi);
     $('reader-scroll').scrollTop = 0;
     if (pi > 0 && state.paragraphs[pi]) locate(pi);
     if (updateHistory && !cfg.noteMode) history.replaceState({}, '', '/read/' + book + '/' + ci + '#source=' + ci + ':' + pi);
@@ -401,7 +445,21 @@ on('toggle-panel','click',()=>toggleSidebar('inspector'));
 on('previous','click',()=>goto(state.chapter-1));on('next','click',()=>goto(state.chapter+1));
 on('search-form','submit',async e=>{e.preventDefault();const q=$('search-input').value.trim();if(!q)return;const data=await api(base+'/search?q='+encodeURIComponent(q));$('nav-results').replaceChildren();data.items.forEach(item=>{const row=el('div','search-result');row.append(button(item.title,()=>goto(item.chapter_idx,item.paragraph_index)),el('small','',item.excerpt));$('nav-results').append(row);});if(!data.items.length)$('nav-results').append(el('p','muted','没有找到匹配文字'));if(data.truncated)$('nav-results').append(el('p','muted','结果较多，请缩小搜索范围'));});
 on('add-bookmark','click',async()=>{const ref=currentPosition();if(ref){await api(base+'/bookmarks',{reference:ref,label:ref.quote.slice(0,50)});toast('已添加书签');}});
-on('reader-scroll','scroll',()=>{clearTimeout(progressTimer);progressTimer=setTimeout(()=>{const ref=currentPosition();if(ref)api(base+'/state',ref,'PUT').catch(e=>toast(e.message));},500);});
+on('reader-scroll','scroll',()=>{
+    clearTimeout(tocTimer);tocTimer=setTimeout(updateTocFromScroll,80);
+    clearTimeout(progressTimer);progressTimer=setTimeout(()=>{const ref=currentPosition();if(ref)api(base+'/state',ref,'PUT').catch(e=>toast(e.message));},500);
+});
+{
+    const scroller=$('reader-scroll');
+    scroller.addEventListener('wheel',e=>{
+        if(state.chapterNavLock)return;
+        const atTop=scroller.scrollTop<=4,atBottom=scroller.scrollTop+scroller.clientHeight>=scroller.scrollHeight-4;
+        const target=e.deltaY>0?(atBottom&&state.chapter<cfg.total-1?state.chapter+1:null):(atTop&&state.chapter>0?state.chapter-1:null);
+        if(target===null)return;
+        state.chapterNavLock=true;
+        goto(target,0).catch(err=>toast(err.message)).finally(()=>setTimeout(()=>state.chapterNavLock=false,400));
+    },{passive:true});
+}
 on('generate-semantic','click',()=>generate({layer:'L3',chapter_idx:state.chapter,mode:'fill_missing',spec_type:$('agent-spec').value}));
 on('toggle-semantic-rail','click',()=>setSemanticVisible(document.body.classList.contains('hide-semantic')));
 on('note-layer','change',()=>{const layer=$('note-layer').value;if(layer==='L1')return openNote(layer);if(layer==='L2')return openNote(layer,{chapter_idx:state.chapter});const ref=state.selected[0]||currentPosition();if(!ref)return;const target={chapter_idx:ref.chapter_idx,paragraph_index:ref.paragraph_index,fingerprint:ref.fingerprint};if(layer==='L4'){const term=state.selected[0]?.quote || prompt('输入当前位置要解释的术语');if(!term)return;target.term=term;}return openNote(layer,target);});
