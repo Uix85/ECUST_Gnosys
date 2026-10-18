@@ -57,7 +57,7 @@
    </div>
   </section>
   <section id="note-panel" class="panel" role="tabpanel" aria-label="四层阅读笔记" hidden>
-   <div class="note-toolbar"><label>层级 <select id="note-layer"><option value="L1">全书层</option><option value="L2">章节层</option><option value="L3">语义层</option><option value="L4">概念层</option><option value="chat" hidden>对话摘记</option></select></label><button id="note-list-toggle">笔记列表</button></div>
+   <div class="note-toolbar"><div class="note-layer-tabs" role="tablist" aria-label="笔记层级"><button type="button" role="tab" data-note-layer="L1" aria-selected="true">全书层</button><button type="button" role="tab" data-note-layer="L2" aria-selected="false">章节层</button><button type="button" role="tab" data-note-layer="L3" aria-selected="false">语义层</button><button type="button" role="tab" data-note-layer="L4" aria-selected="false">概念层</button></div><button id="note-list-toggle">笔记列表</button></div>
    <div id="note-list" hidden></div><div class="note-target" id="note-target"></div>
    <div class="note-controls"><label>规范 <select id="agent-spec"><option value="general">通用规范</option><option value="hegel_helin">黑格尔贺麟译本</option></select></label><button id="generate-note" class="primary">AI 生成</button></div>
    <div class="note-controls"><button id="edit-note" aria-pressed="false">编辑</button><button id="save-note">保存</button><button id="export-note">导出 Markdown</button><span id="note-save-state" role="status"></span></div>

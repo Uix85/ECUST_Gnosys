@@ -5,6 +5,7 @@ const base = '/api/workspace/' + book, agentBase = '/api/agent/' + book + '/runs
 const $ = id => document.getElementById(id);
 const state = {chapter: cfg.chapter, nodes: [], paragraphs: [], references: [], session: '', messages: [], activeMessage: '',
     note: null, dirty: false, editing: false, selected: [], nav: 'outline', panel: 'chat', generation: 0,
+    noteSentences: [],
     tocPinned: new Set(), tocClosed: new Set(), tocActive: new Set(), chapterNavLock: false};
 let chatStream, toastTimer, progressTimer, tocTimer, runStream, mention = null, noteRequest = 0;
 function toast(text) { $('toast').textContent = text; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 5500); }
@@ -137,26 +138,10 @@ async function goto(ci, pi = 0, updateHistory = true, edge = 'top') {
         source.querySelectorAll('img').forEach(image => { const src = image.getAttribute('src'); if (src && !/^(https?:|\/)/i.test(src)) image.src = '/read/' + book + '/' + src; });
         const side = el('aside', 'semantic-note'); side.setAttribute('aria-label', '段落解释');
         if (p.note) {
-            const short = button(p.note.short || '查看解释', () => openSemantic(p), 'short');
-            const toggle = button('详细 / 逐句', () => {
-                if (detailSlot.firstChild) {
-                    detailSlot.replaceChildren();
-                    short.hidden = false;
-                    toggle.textContent = '详细 / 逐句';
-                    return;
-                }
-                short.hidden = true;
-                toggle.textContent = '收起详细 / 逐句';
-                const detail = mdBox(p.note.detail || p.note.short); detail.classList.add('detail');
-                if (p.note.sentences?.length) {
-                    detail.append(el('h4', '', '逐句解释')); p.note.sentences.forEach((s, index) => { detail.append(mdBox((index + 1) + '. ' + s)); });
-                }
-                detailSlot.append(detail);
-            });
-            side.append(short, toggle);
+            side.append(el('div', 'short', p.note.short || '查看解释'));
+            side.append(button('详细 / 逐句', () => openSemantic(p)));
         } else if (p.text.length >= 25) side.append(button('生成段落解释', () => generate({layer:'L3', paragraph_ref:{chapter_idx:ci, paragraph_index:p.paragraph_index, fingerprint:p.fingerprint}, spec_type:$('agent-spec').value})));
-        const detailSlot = el('div', 'semantic-detail-slot');
-        side.append(detailSlot, button('编辑', () => openSemantic(p))); row.append(source, side); fragment.append(row);
+        row.append(source, side); fragment.append(row);
     });
     data.images.forEach(markup => { const holder = el('div'); holder.innerHTML = DOMPurify.sanitize(markup); holder.querySelectorAll('img').forEach(img => { img.classList.add('book-image'); const src = img.getAttribute('src'); if (src && !/^(https?:|\/)/i.test(src)) img.src = '/read/' + book + '/' + src; }); fragment.append(holder); });
     $('chapter-content').replaceChildren(fragment); $('chapter-content').setAttribute('aria-busy', 'false');
@@ -172,16 +157,46 @@ async function goto(ci, pi = 0, updateHistory = true, edge = 'top') {
 function locate(pi) { const target = $('paragraph-' + pi); if (!target) return; target.scrollIntoView({block: 'start'}); document.querySelectorAll('.located').forEach(n => n.classList.remove('located')); target.classList.add('located'); setTimeout(() => target.classList.remove('located'), 2600); }
 async function jumpReference(ref) { const r = await api(base + '/reference/check', {references:[ref]}); const valid = r.items[0]; await goto(valid.chapter_idx, valid.paragraph_index); }
 async function openNote(layer, target = {}) {
-    if (!canLeaveNote()) return;
+    if (!canLeaveNote()) return null;
     const id = ++noteRequest;
     const data = await api(base + '/note/read', {layer, target});
-    if (id !== noteRequest) return;
-    state.note = data; state.dirty = false; state.editing = false; $('note-layer').value = layer; $('note-editor').value = data.content;
+    if (id !== noteRequest) return null;
+    state.note = data; state.dirty = false; state.editing = false; state.noteSentences = []; setNoteLayerUI(layer); $('note-editor').value = data.content;
     $('note-target').textContent = layer === 'L1' ? cfg.title : layer === 'chat' ? '对话摘记' : (state.nodes.find(n => n.id === 'c' + target.chapter_idx)?.title || '') + (target.paragraph_index !== undefined ? ' · 段落 ' + (target.paragraph_index + 1) : '') + (target.term ? ' · ' + target.term : '');
     $('note-save-state').textContent = ''; $('generate-note').disabled = layer === 'chat'; renderNote(); panel('note');
+    return data;
 }
-function openSemantic(p) { return openNote('L3', {chapter_idx:state.chapter, paragraph_index:p.paragraph_index, fingerprint:p.fingerprint}); }
-function renderNote() { $('note-editor').hidden = !state.editing; $('note-preview').hidden = state.editing; $('note-preview').innerHTML = renderMarkdown($('note-editor').value); $('edit-note').textContent = state.editing ? '预览' : '编辑'; $('edit-note').setAttribute('aria-pressed', String(state.editing)); }
+function setNoteLayerUI(layer) { document.querySelectorAll('[data-note-layer]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.noteLayer === layer))); }
+async function openSemantic(p) {
+    const target = {chapter_idx:state.chapter, paragraph_index:p.paragraph_index, fingerprint:p.fingerprint};
+    const data = await openNote('L3', target);
+    if (!data || data.target.chapter_idx !== target.chapter_idx || data.target.paragraph_index !== target.paragraph_index) return;
+    state.noteSentences = p.note?.sentences || [];
+    renderNote();
+}
+async function openNoteLayer(layer) {
+    if (layer === 'L1') return openNote(layer);
+    if (layer === 'L2') return openNote(layer, {chapter_idx:state.chapter});
+    const ref = state.selected[0] || currentPosition(); if (!ref) return;
+    const target = {chapter_idx:ref.chapter_idx, paragraph_index:ref.paragraph_index, fingerprint:ref.fingerprint};
+    if (layer === 'L4') { const term = state.selected[0]?.quote || prompt('输入当前位置要解释的术语'); if (!term) return; target.term = term; }
+    const data = await openNote(layer, target);
+    if (layer === 'L3' && data) {
+        const p = state.paragraphs.find(x => x.paragraph_index === target.paragraph_index);
+        state.noteSentences = p?.note?.sentences || [];
+        renderNote();
+    }
+}
+function renderNote() {
+    $('note-editor').hidden = !state.editing; $('note-preview').hidden = state.editing;
+    const preview = $('note-preview');
+    preview.innerHTML = renderMarkdown($('note-editor').value);
+    if (state.note?.layer === 'L3' && state.noteSentences?.length) {
+        preview.append(el('h4', '', '逐句解释'));
+        state.noteSentences.forEach((s, index) => preview.append(mdBox((index + 1) + '. ' + s)));
+    }
+    $('edit-note').textContent = state.editing ? '预览' : '编辑'; $('edit-note').setAttribute('aria-pressed', String(state.editing));
+}
 async function saveNote() {
     if (!state.note) return;
     try {
@@ -485,7 +500,7 @@ on('reader-scroll','scroll',()=>{
 }
 on('generate-semantic','click',()=>generate({layer:'L3',chapter_idx:state.chapter,mode:'fill_missing',spec_type:$('agent-spec').value}));
 on('toggle-semantic-rail','click',()=>setSemanticVisible(document.body.classList.contains('hide-semantic')));
-on('note-layer','change',()=>{const layer=$('note-layer').value;if(layer==='L1')return openNote(layer);if(layer==='L2')return openNote(layer,{chapter_idx:state.chapter});const ref=state.selected[0]||currentPosition();if(!ref)return;const target={chapter_idx:ref.chapter_idx,paragraph_index:ref.paragraph_index,fingerprint:ref.fingerprint};if(layer==='L4'){const term=state.selected[0]?.quote || prompt('输入当前位置要解释的术语');if(!term)return;target.term=term;}return openNote(layer,target);});
+document.querySelectorAll('[data-note-layer]').forEach(b => b.onclick = () => openNoteLayer(b.dataset.noteLayer).catch(e => toast(e.message)));
 on('edit-note','click',()=>{state.editing=!state.editing;renderNote();if(state.editing)$('note-editor').focus();});
 on('note-editor','input',()=>{state.dirty=true;$('note-save-state').textContent='未保存';});on('save-note','click',saveNote);
 on('export-note','click',()=>download($('note-editor').value,(state.note?.key||'笔记')+'.md'));
