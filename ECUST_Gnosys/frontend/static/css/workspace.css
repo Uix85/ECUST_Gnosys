@@ -30,13 +30,13 @@ body{height:100dvh;overflow:hidden}.library-page{height:auto;min-height:100dvh;o
 .reading-heading .eyebrow{margin:0 0 4px}
 .reading-heading h1{margin:0;font-size:24px;line-height:1.35;letter-spacing:-.4px;overflow-wrap:anywhere}
 .reading-controls{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-left:auto}
-.function-board{flex:0 0 2vw;width:2vw;min-width:0;max-width:2vw;display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 0;background:#f8fafc;border-right:1px solid var(--line);overflow-y:auto;overflow-x:hidden;resize:none}
-.function-top,.function-nav{display:flex;flex-direction:column;gap:4px;align-items:center;flex:none}
-.function-divider{width:72%;height:1px;background:var(--line);margin:3px 0;flex:none}
+.function-board{flex:0 0 8vw;width:8vw;min-width:0;max-width:8vw;display:flex;flex-direction:column;align-items:center;gap:8px;padding:10px 0;background:#f8fafc;border-right:1px solid var(--line);overflow-y:auto;overflow-x:hidden;resize:none}
+.function-top,.function-nav{display:flex;flex-direction:column;gap:6px;align-items:center;flex:none;width:100%}
+.function-divider{width:72%;height:1px;background:var(--line);margin:5px 0;flex:none}
 .rail-settings-divider{margin-top:auto}
-.function-board .rail-button,.function-board .icon-button{width:calc(2vw - 8px);height:calc(2vw - 8px);min-width:14px;min-height:14px;max-width:24px;max-height:24px;padding:0;border:0;background:transparent;border-radius:6px;display:grid;place-items:center;font-size:12px;color:var(--ink);flex:none}
-.function-board .rail-glyph{font:600 12px/1 ui-monospace,SFMono-Regular,Consolas,monospace}
-.function-board .icon-button svg{width:70%;height:70%}
+.function-board .rail-button,.function-board .icon-button{width:calc(8vw - 24px);height:40px;min-width:40px;min-height:40px;max-width:104px;max-height:40px;padding:0;border:0;background:transparent;border-radius:8px;display:grid;place-items:center;font-size:14px;color:var(--ink);flex:none}
+.function-board .rail-glyph{font:600 20px/1 ui-monospace,SFMono-Regular,Consolas,monospace}
+.function-board .icon-button svg{width:24px;height:24px}
 .function-board .rail-button:hover,.function-board .icon-button:hover{background:var(--blue-soft);color:var(--blue)}
 .function-board #toggle-semantic-rail[aria-pressed="false"]{color:var(--muted);opacity:.55}
 .reader-page .workspace{height:100dvh}
@@ -63,6 +63,6 @@ body{height:100dvh;overflow:hidden}.library-page{height:auto;min-height:100dvh;o
 .icon-button svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .icon-button:hover{background:var(--blue-soft);border-color:#b5c9eb;color:var(--blue);text-decoration:none}
 @media(max-width:800px){
- .reader-page .navigation{top:0;left:2vw}
+ .reader-page .navigation{top:0;left:8vw}
  .reader-page .inspector{top:0}
 }
