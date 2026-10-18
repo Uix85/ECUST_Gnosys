@@ -53,6 +53,7 @@ function nodeButton(node) {
         const fold = button('', () => toggleToc(node.id), 'toc-fold');
         fold.setAttribute('aria-label', '折叠或展开 ' + node.title);
         fold.setAttribute('aria-expanded', String(expanded));
+        fold.style.setProperty('--toc-fold-size', (16 * Math.pow(0.9, node.depth)).toFixed(2) + 'px');
         fold.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${expanded ? 'M6 9l6 6 6-6' : 'M9 6l6 6-6 6'}"/></svg>`;
         row.append(fold);
     } else row.append(el('span', 'toc-fold', ''));
