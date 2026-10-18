@@ -46,7 +46,7 @@
   </div>
  </main>
  <aside id="inspector" class="inspector" aria-label="Agent 与阅读笔记">
-  <div class="tabbar" role="tablist" aria-label="辅助阅读面板"><button role="tab" data-panel="chat" aria-selected="true">对话</button><button role="tab" data-panel="note" aria-selected="false">四层笔记</button><button role="tab" data-panel="runs" aria-selected="false">任务与待核稿</button></div>
+  <div class="tabbar" role="tablist" aria-label="辅助阅读面板"><button role="tab" data-panel="chat" aria-selected="true">对话</button><div class="tab-dropdown"><button role="tab" data-panel="note" aria-selected="false">四层笔记</button><div class="layer-menu" role="menu" aria-label="笔记层级"><button type="button" role="menuitem" data-note-layer="L1" aria-selected="true">全书层</button><button type="button" role="menuitem" data-note-layer="L2" aria-selected="false">章节层</button><button type="button" role="menuitem" data-note-layer="L3" aria-selected="false">语义层</button><button type="button" role="menuitem" data-note-layer="L4" aria-selected="false">概念层</button></div></div><button role="tab" data-panel="runs" aria-selected="false">任务与待核稿</button></div>
   <section id="chat-panel" class="panel" role="tabpanel" aria-label="书籍对话">
    <div class="session-toolbar"><label class="sr-only" for="sessions">选择对话</label><select id="sessions"><option value="">选择或新建对话</option></select><button id="new-session" title="新建对话">新建</button><button id="rename-session" title="重命名对话">改名</button><button id="delete-session" title="删除对话">删除</button></div>
    <div id="messages" class="messages"><div class="empty-state"><span class="empty-mark">G</span><h2>从原文开始思考</h2><p>划选文字加入对话，或输入 @ 引用章、节、子节。每段讨论随书保存。</p></div></div>
@@ -57,7 +57,7 @@
    </div>
   </section>
   <section id="note-panel" class="panel" role="tabpanel" aria-label="四层阅读笔记" hidden>
-   <div class="note-toolbar"><div class="note-layer-tabs" role="tablist" aria-label="笔记层级"><button type="button" role="tab" data-note-layer="L1" aria-selected="true">全书层</button><button type="button" role="tab" data-note-layer="L2" aria-selected="false">章节层</button><button type="button" role="tab" data-note-layer="L3" aria-selected="false">语义层</button><button type="button" role="tab" data-note-layer="L4" aria-selected="false">概念层</button></div><button id="note-list-toggle">笔记列表</button></div>
+   <div class="note-toolbar"><span class="note-layer-current" id="note-layer-current">全书层</span><button id="note-list-toggle">笔记列表</button></div>
    <div id="note-list" hidden></div><div class="note-target" id="note-target"></div>
    <div class="note-controls"><label>规范 <select id="agent-spec"><option value="general">通用规范</option><option value="hegel_helin">黑格尔贺麟译本</option></select></label><button id="generate-note" class="primary">AI 生成</button></div>
    <div class="note-controls"><button id="edit-note" aria-pressed="false">编辑</button><button id="save-note">保存</button><button id="export-note">导出 Markdown</button><span id="note-save-state" role="status"></span></div>

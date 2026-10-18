@@ -166,7 +166,11 @@ async function openNote(layer, target = {}) {
     $('note-save-state').textContent = ''; $('generate-note').disabled = layer === 'chat'; renderNote(); panel('note');
     return data;
 }
-function setNoteLayerUI(layer) { document.querySelectorAll('[data-note-layer]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.noteLayer === layer))); }
+function setNoteLayerUI(layer) {
+    document.querySelectorAll('[data-note-layer]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.noteLayer === layer)));
+    const label = $('note-layer-current'), names = {L1:'全书层', L2:'章节层', L3:'语义层', L4:'概念层', chat:'对话摘记'};
+    if (label) label.textContent = names[layer] || '';
+}
 async function openSemantic(p) {
     const target = {chapter_idx:state.chapter, paragraph_index:p.paragraph_index, fingerprint:p.fingerprint};
     const data = await openNote('L3', target);
