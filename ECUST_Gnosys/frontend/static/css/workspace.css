@@ -84,3 +84,5 @@ body{height:100dvh;overflow:hidden}.library-page{height:auto;min-height:100dvh;o
 .note-controls{padding:7px 10px;gap:5px}
 .note-controls button{font-size:10px;padding:4px 7px}
 .note-controls select{padding:3px 5px;font-size:11px;max-width:170px}
+.tabbar{min-width:0}
+.tabbar button{min-width:0;overflow:hidden;text-overflow:ellipsis}
