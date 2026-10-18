@@ -192,20 +192,21 @@ async function openNoteLayer(layer) {
     }
 }
 function renderNote() {
-    $('note-editor').hidden = !state.editing; $('note-preview').hidden = state.editing;
+    const editing = state.editing;
+    $('note-editor').hidden = !editing; $('note-preview').hidden = editing;
+    $('edit-note').hidden = editing; $('save-note').hidden = !editing;
     const preview = $('note-preview');
     preview.innerHTML = renderMarkdown($('note-editor').value);
     if (state.note?.layer === 'L3' && state.noteSentences?.length) {
         preview.append(el('h4', '', '逐句解释'));
         state.noteSentences.forEach((s, index) => preview.append(mdBox((index + 1) + '. ' + s)));
     }
-    $('edit-note').textContent = state.editing ? '预览' : '编辑'; $('edit-note').setAttribute('aria-pressed', String(state.editing));
 }
 async function saveNote() {
     if (!state.note) return;
     try {
         const data = await api(base + '/note', {layer:state.note.layer, target:state.note.target, content:$('note-editor').value, baseline:baseline(state.note)}, 'PUT');
-        state.note = data; state.dirty = false; $('note-save-state').textContent = '已保存'; toast('笔记已保存');
+        state.note = data; state.dirty = false; state.editing = false; $('note-save-state').textContent = '已保存'; toast('笔记已保存'); renderNote();
     } catch (e) {
         if (e.status === 409) { $('note-save-state').textContent = '保存冲突 · 输入已保留'; download($('note-editor').value, '冲突笔记备份.md'); }
         throw e;
@@ -505,7 +506,7 @@ on('reader-scroll','scroll',()=>{
 on('generate-semantic','click',()=>generate({layer:'L3',chapter_idx:state.chapter,mode:'fill_missing',spec_type:$('agent-spec').value}));
 on('toggle-semantic-rail','click',()=>setSemanticVisible(document.body.classList.contains('hide-semantic')));
 document.querySelectorAll('[data-note-layer]').forEach(b => b.onclick = () => openNoteLayer(b.dataset.noteLayer).catch(e => toast(e.message)));
-on('edit-note','click',()=>{state.editing=!state.editing;renderNote();if(state.editing)$('note-editor').focus();});
+on('edit-note','click',()=>{state.editing=true;renderNote();$('note-editor').focus();});
 on('note-editor','input',()=>{state.dirty=true;$('note-save-state').textContent='未保存';});on('save-note','click',saveNote);
 on('export-note','click',()=>download($('note-editor').value,(state.note?.key||'笔记')+'.md'));
 on('generate-note','click',async()=>{if(!state.note)return;if(state.dirty){toast('请先保存当前笔记，再生成 AI 候选稿');return;}const n=state.note;if(n.layer==='L3')await generate({layer:'L3',paragraph_ref:n.target,mode:'overwrite',spec_type:$('agent-spec').value});else await generate({layer:n.layer,target:n.target,spec_type:$('agent-spec').value});});
