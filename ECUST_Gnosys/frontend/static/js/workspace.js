@@ -49,8 +49,8 @@ function nodeButton(node) {
     const row = el('div', 'toc-row' + (state.tocActive.has(node.id) ? ' active' : '')); row.dataset.depth = node.depth; row.dataset.id = node.id;
     row.style.paddingLeft = Math.min(node.depth, 5) * 12 + 'px';
     const level = Math.min(node.depth, 4);
-    row.style.setProperty('--toc-title-size', (13 - level) + 'px');
-    row.style.setProperty('--toc-fold-size', (15 - level) + 'px');
+    row.style.setProperty('--toc-title-size', (13.5 - level) + 'px');
+    row.style.setProperty('--toc-fold-size', (15.5 - level) + 'px');
     row.hidden = !tocVisible(node);
     if (tocHasChildren(node.id)) {
         const expanded = tocExpanded(node.id);
