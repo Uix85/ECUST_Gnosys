@@ -3,11 +3,11 @@
 const cfg = window.GNOSYS, book = encodeURIComponent(cfg.bookId);
 const base = '/api/workspace/' + book, agentBase = '/api/agent/' + book + '/runs', chatBase = '/api/chat/' + book;
 const $ = id => document.getElementById(id);
-const state = {chapter: cfg.chapter, nodes: [], paragraphs: [], references: [], session: '', messages: [], activeMessage: '',
+const state = {chapter: cfg.chapter, nodes: [], paragraphs: [], references: [], session: '', sessions: [], messages: [], activeMessage: '',
     note: null, dirty: false, editing: false, selected: [], nav: 'outline', panel: 'chat', generation: 0,
     noteSentences: [],
     tocPinned: new Set(), tocClosed: new Set(), tocActive: new Set(), chapterNavLock: false};
-let chatStream, toastTimer, progressTimer, tocTimer, runStream, mention = null, noteRequest = 0;
+let chatStream, toastTimer, progressTimer, tocTimer, runStream, mention = null, noteRequest = 0, menuSessionId = '';
 function toast(text) { $('toast').textContent = text; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 5500); }
 async function api(url, body, method) {
     const options = body === undefined ? {} : {method: method || 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)};
@@ -294,21 +294,89 @@ function chooseMention(index) {
     input.value = input.value.slice(0,position) + input.value.slice(mention.end); input.setSelectionRange(position,position);
     addReferences([{kind:'node',node_id:node.id,chapter_idx:node.chapter_idx,paragraph_index:node.paragraph_index,fingerprint:node.fingerprint,label:node.path.join(' - ')}]); closeMentions();
 }
-async function sessions(select) {
-    const data = await api(chatBase + '/sessions'); $('sessions').replaceChildren(new Option('选择或新建对话',''));
-    data.items.forEach(s => $('sessions').append(new Option(s.title,s.id)));
-    if (select !== undefined) state.session = select;
-    if (!state.session && data.items.length) state.session=data.items[0].id;
-    $('sessions').value=state.session;
-    if (state.session) await loadSession();
+function sessionTime(value) {
+    const date = new Date(value); if (Number.isNaN(date.getTime())) return '';
+    const now = new Date();
+    if (date.toDateString() === now.toDateString()) return String(date.getHours()).padStart(2,'0') + ':' + String(date.getMinutes()).padStart(2,'0');
+    if (date.getFullYear() === now.getFullYear()) return (date.getMonth()+1) + '月' + date.getDate() + '日';
+    return date.getFullYear() + '年' + (date.getMonth()+1) + '月' + date.getDate() + '日';
+}
+function showSessionList() {
+    closeSessionMenu();
+    $('chat-sessions-view').hidden = false;
+    $('chat-thread-view').hidden = true;
+}
+function showThreadView() {
+    closeSessionMenu();
+    $('chat-sessions-view').hidden = true;
+    $('chat-thread-view').hidden = false;
+}
+function renderSessionList() {
+    const list = $('session-list');
+    list.replaceChildren();
+    $('session-count').textContent = state.sessions.length ? state.sessions.length + ' 个对话 · 右键管理' : '尚无对话';
+    if (!state.sessions.length) {
+        list.append(el('p', 'session-list-state muted', '还没有对话，点「+ 新对话」开始。'));
+        return;
+    }
+    for (const session of state.sessions) {
+        const row = el('div', 'session-item' + (session.id === state.session ? ' active' : ''));
+        row.setAttribute('role', 'listitem'); row.tabIndex = 0; row.dataset.sessionId = session.id;
+        row.title = '打开对话；右键可重命名或删除';
+        const main = el('div', 'session-item-main');
+        main.append(el('span', 'session-item-title', session.title || '新对话'), el('span', 'session-item-time', sessionTime(session.updated_at)));
+        row.append(main);
+        row.addEventListener('click', () => { closeSessionMenu(); openSession(session.id).catch(error => toast(error.message)); });
+        row.addEventListener('contextmenu', event => { event.preventDefault(); event.stopPropagation(); openSessionMenu(event.clientX, event.clientY, session.id); });
+        row.addEventListener('keydown', event => {
+            if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); row.click(); return; }
+            if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+                event.preventDefault(); const rect = row.getBoundingClientRect(); openSessionMenu(rect.right - 12, rect.top + 14, session.id);
+            }
+        });
+        list.append(row);
+    }
+}
+function closeSessionMenu() {
+    const menu = $('session-menu'); if (!menu || menu.hidden) return;
+    menu.hidden = true; menuSessionId = '';
+}
+function openSessionMenu(x, y, id) {
+    menuSessionId = id;
+    const menu = $('session-menu');
+    menu.hidden = false; menu.style.left = '0px'; menu.style.top = '0px';
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)) + 'px';
+    menu.style.top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8)) + 'px';
+    $('rename-session').focus();
+}
+async function sessions() {
+    const data = await api(chatBase + '/sessions');
+    state.sessions = data.items || [];
+    renderSessionList();
+}
+async function openSession(id) {
+    state.session = id;
+    panel('chat'); showThreadView();
+    const current = state.sessions.find(session => session.id === id);
+    $('chat-session-title').textContent = current?.title || '对话';
+    $('chat-session-meta').textContent = current ? '最后更新 ' + sessionTime(current.updated_at) : '';
+    $('messages').replaceChildren(el('p', 'muted', '正在载入对话…'));
+    await loadSession();
 }
 async function newSession() {
-    const r = await api(chatBase + '/sessions',{}); state.session=r.id; await sessions(r.id); panel('chat'); $('chat-input').focus(); return r.id;
+    const r = await api(chatBase + '/sessions', {});
+    await sessions();
+    await openSession(r.id);
+    $('chat-input').focus();
+    return r.id;
 }
 async function loadSession() {
     if (chatStream) chatStream.close(); state.activeMessage='';
     if (!state.session) { state.messages=[]; renderMessages(); return; }
     const sid=state.session, data=await api(chatBase + '/sessions/' + sid); if(sid!==state.session)return;
+    $('chat-session-title').textContent = data.title || '对话';
+    $('chat-session-meta').textContent = '最后更新 ' + sessionTime(data.updated_at);
     state.messages=data.messages; renderMessages();
     const active=data.messages.find(m=>m.role==='assistant' && ['queued','running'].includes(m.status));
     if(active) streamAnswer(active.id,active.event_cursor || 0); else setChatActive(false);
@@ -519,7 +587,11 @@ async function jumpToAnchor(ci,anchor){
     const top=scroller.scrollTop+target.getBoundingClientRect().top-scroller.getBoundingClientRect().top;
     scroller.scrollTo({top,behavior:'smooth'});
 }
-document.querySelectorAll('[data-panel]').forEach(b=>b.onclick=()=>panel(b.dataset.panel));document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>nav(b.dataset.nav).catch(e=>toast(e.message)));
+document.querySelectorAll('[data-panel]').forEach(b=>b.onclick=()=>{const previous=state.panel;panel(b.dataset.panel);if(b.dataset.panel==='chat'&&previous!=='chat'){showSessionList();sessions().catch(e=>toast(e.message));}});document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>nav(b.dataset.nav).catch(e=>toast(e.message)));
+document.addEventListener('click',e=>{if(!e.target.closest('#session-menu'))closeSessionMenu();});
+document.addEventListener('contextmenu',e=>{if(!e.target.closest('.session-item')&&!e.target.closest('#session-menu'))closeSessionMenu();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSessionMenu();});
+window.addEventListener('resize',closeSessionMenu);$('session-list').addEventListener('scroll',closeSessionMenu,{passive:true});
 on('toggle-nav','click',()=>toggleSidebar('nav'));
 on('toggle-panel','click',()=>toggleSidebar('inspector'));
 on('previous','click',()=>goto(state.chapter-1));on('next','click',()=>goto(state.chapter+1));
@@ -548,9 +620,9 @@ on('note-editor','input',()=>{state.dirty=true;$('note-save-state').textContent=
 on('export-note','click',()=>download($('note-editor').value,(state.note?.key||'笔记')+'.md'));
 on('generate-note','click',async()=>{if(!state.note)return;if(state.dirty){toast('请先保存当前笔记，再生成 AI 候选稿');return;}const n=state.note;if(n.layer==='L3')await generate({layer:'L3',paragraph_ref:n.target,mode:'overwrite',spec_type:$('agent-spec').value});else await generate({layer:n.layer,target:n.target,spec_type:$('agent-spec').value});});
 on('note-list-toggle','click',async()=>{const box=$('note-list');box.hidden=!box.hidden;if(box.hidden)return;const [saved,legacy]=await Promise.all([api(base+'/notes'),api('/api/layer/concept_list/'+book)]);box.replaceChildren();saved.items.forEach(n=>box.append(button(n.layer+' · '+(n.target.term||n.content.slice(0,45)||n.key),()=>openNote(n.layer,n.target))));legacy.items.forEach(n=>{const d=el('details');d.append(el('summary','','原有概念 · '+n.term),mdBox(n.content));box.append(d);});if(!box.children.length)box.append(el('p','muted','尚无笔记'));});
-on('refresh-runs','click',refreshRuns);on('new-session','click',newSession);on('sessions','change',()=>{state.session=$('sessions').value;return loadSession();});
-on('rename-session','click',async()=>{if(!state.session)return;const title=prompt('对话名称',$('sessions').selectedOptions[0].text);if(title){await api(chatBase+'/sessions/'+state.session,{title},'PATCH');await sessions(state.session);}});
-on('delete-session','click',async()=>{if(state.session&&confirm('删除此对话及其历史？')){await api(chatBase+'/sessions/'+state.session,undefined,'DELETE');state.session='';await sessions('');if(!state.session){state.messages=[];renderMessages();}}});
+on('refresh-runs','click',refreshRuns);on('back-to-sessions','click',async()=>{showSessionList();await sessions();});on('new-session','click',newSession);
+on('rename-session','click',async()=>{const id=menuSessionId;closeSessionMenu();if(!id)return;const item=state.sessions.find(s=>s.id===id);if(!item)return;const title=prompt('对话名称',item.title||'新对话');if(title===null)return;const value=title.trim();if(!value){toast('对话名称不能为空');return;}await api(chatBase+'/sessions/'+id,{title:value},'PATCH');await sessions();if(state.session===id)$('chat-session-title').textContent=value;toast('已重命名');});
+on('delete-session','click',async()=>{const id=menuSessionId;closeSessionMenu();if(!id||!confirm('删除此对话及其历史？'))return;if(state.session===id){if(chatStream)chatStream.close();state.session='';state.messages=[];state.activeMessage='';setChatActive(false);renderMessages();}await api(chatBase+'/sessions/'+id,undefined,'DELETE');await sessions();showSessionList();toast('对话已删除');});
 on('export-chat','click',()=>{if(state.session)location.href=chatBase+'/sessions/'+state.session+'/export';});on('send-chat','click',send);
 on('stop-chat','click',async()=>{if(state.activeMessage)await api(chatBase+'/sessions/'+state.session+'/messages/'+state.activeMessage+'/cancel',{});});
 on('chat-input','input',()=>{delete $('chat-input').dataset.requestId;updateMentions();});
@@ -621,6 +693,6 @@ function setSemanticVisible(visible){
 }
 initReadingCycles();
 setSemanticVisible(true);
-async function init(){const settingsLink=$('open-settings');if(settingsLink)settingsLink.href='/settings?from='+encodeURIComponent(location.pathname+location.search+location.hash);initSidebars();if(innerWidth<=800){document.body.classList.add('no-navigation','no-inspector');$('toggle-nav').setAttribute('aria-expanded','false');$('toggle-panel').setAttribute('aria-expanded','false');}const data=await api(base+'/outline');state.nodes=data.items;await nav('outline');const match=location.hash.match(/source=(\d+):(\d+)/);await goto(match?Number(match[1]):state.chapter,match?Number(match[2]):0,false);await sessions();if(cfg.noteMode)await openNote('L1');window.GNOSYS.ready=true;}
+async function init(){const settingsLink=$('open-settings');if(settingsLink)settingsLink.href='/settings?from='+encodeURIComponent(location.pathname+location.search+location.hash);initSidebars();if(innerWidth<=800){document.body.classList.add('no-navigation','no-inspector');$('toggle-nav').setAttribute('aria-expanded','false');$('toggle-panel').setAttribute('aria-expanded','false');}const data=await api(base+'/outline');state.nodes=data.items;await nav('outline');const match=location.hash.match(/source=(\d+):(\d+)/);await goto(match?Number(match[1]):state.chapter,match?Number(match[2]):0,false);await sessions();showSessionList();if(cfg.noteMode)await openNote('L1');window.GNOSYS.ready=true;}
 init().catch(e=>toast(e.message));
 })();

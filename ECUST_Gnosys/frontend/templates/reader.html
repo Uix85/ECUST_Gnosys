@@ -57,12 +57,28 @@
  <aside id="inspector" class="inspector" aria-label="Agent 与阅读笔记">
   <div class="tabbar" role="tablist" aria-label="辅助阅读面板"><button role="tab" data-panel="chat" aria-selected="true">对话</button><div class="tab-dropdown"><button role="tab" data-panel="note" aria-selected="false">四层笔记</button><div class="layer-menu" role="menu" aria-label="笔记层级"><button type="button" role="menuitem" data-note-layer="L1" aria-selected="true">全书层</button><button type="button" role="menuitem" data-note-layer="L2" aria-selected="false">章节层</button><button type="button" role="menuitem" data-note-layer="L3" aria-selected="false">语义层</button><button type="button" role="menuitem" data-note-layer="L4" aria-selected="false">概念层</button></div></div><button role="tab" data-panel="runs" aria-selected="false">任务与待核稿</button></div>
   <section id="chat-panel" class="panel" role="tabpanel" aria-label="书籍对话">
-   <div class="session-toolbar"><label class="sr-only" for="sessions">选择对话</label><select id="sessions"><option value="">选择或新建对话</option></select><button id="new-session" title="新建对话">新建</button><button id="rename-session" title="重命名对话">改名</button><button id="delete-session" title="删除对话">删除</button></div>
-   <div id="messages" class="messages"><div class="empty-state"><span class="empty-mark">G</span><h2>从原文开始思考</h2><p>划选文字加入对话，或输入 @ 引用章、节、子节。每段讨论随书保存。</p></div></div>
-   <div id="chat-status" class="status-line" role="status"></div>
-   <div class="composer"><div id="reference-chips" class="reference-chips"></div><div id="mention-list" role="listbox" aria-label="章节自动补全" hidden></div>
-    <label class="sr-only" for="chat-input">向阅读 Agent 提问</label><textarea id="chat-input" rows="3" placeholder="向这本书提问，输入 @ 引用章节…" aria-controls="mention-list" aria-autocomplete="list" aria-expanded="false"></textarea>
-    <div class="composer-footer"><button id="export-chat">导出对话</button><span class="muted">Enter 发送 · Shift+Enter 换行</span><button id="stop-chat" hidden>停止</button><button id="send-chat" class="primary">发送</button></div>
+   <div id="chat-sessions-view" class="chat-sessions-view">
+    <header class="chat-sessions-header">
+     <div><h2>对话</h2><p id="session-count" class="muted">正在载入…</p></div>
+     <button id="new-session" class="primary" title="新建对话">+ 新对话</button>
+    </header>
+    <div id="session-list" class="session-list" role="list"></div>
+   </div>
+   <div id="chat-thread-view" class="chat-thread-view" hidden>
+    <header class="chat-thread-header">
+     <button id="back-to-sessions" class="icon-button" aria-label="返回对话列表" title="返回对话列表"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5"/><path d="M11 18l-6-6 6-6"/></svg></button>
+     <div class="chat-thread-heading"><h2 id="chat-session-title">对话</h2><span id="chat-session-meta" class="muted"></span></div>
+    </header>
+    <div id="messages" class="messages"><div class="empty-state"><span class="empty-mark">G</span><h2>从原文开始思考</h2><p>划选文字加入对话，或输入 @ 引用章、节、子节。每段讨论随书保存。</p></div></div>
+    <div id="chat-status" class="status-line" role="status"></div>
+    <div class="composer"><div id="reference-chips" class="reference-chips"></div><div id="mention-list" role="listbox" aria-label="章节自动补全" hidden></div>
+     <label class="sr-only" for="chat-input">向阅读 Agent 提问</label><textarea id="chat-input" rows="3" placeholder="向这本书提问，输入 @ 引用章节…" aria-controls="mention-list" aria-autocomplete="list" aria-expanded="false"></textarea>
+     <div class="composer-footer"><button id="export-chat">导出对话</button><span class="muted">Enter 发送 · Shift+Enter 换行</span><button id="stop-chat" hidden>停止</button><button id="send-chat" class="primary">发送</button></div>
+    </div>
+   </div>
+   <div id="session-menu" class="session-menu" role="menu" aria-label="对话操作" hidden>
+    <button id="rename-session" type="button" role="menuitem">重命名</button>
+    <button id="delete-session" type="button" role="menuitem" class="danger">删除</button>
    </div>
   </section>
   <section id="note-panel" class="panel" role="tabpanel" aria-label="四层阅读笔记" hidden>
