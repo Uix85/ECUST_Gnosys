@@ -629,7 +629,15 @@ on('chat-input','input',()=>{delete $('chat-input').dataset.requestId;updateMent
 on('chat-input','keydown',e=>{if(e.isComposing)return;if(mention){if(['ArrowDown','ArrowUp'].includes(e.key)){e.preventDefault();mention.index=(mention.index+(e.key==='ArrowDown'?1:-1)+mention.matches.length)%Math.max(1,mention.matches.length);renderMentions();return;}if(e.key==='Escape'){e.preventDefault();closeMentions();return;}if(e.key==='Enter'&&mention.matches.length){e.preventDefault();chooseMention(mention.index);return;}}if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();if(!state.activeMessage)return send();}});
 on('chapter-content','mouseup',captureSelection);on('chapter-content','keyup',captureSelection);
 $('selection-actions').addEventListener('mousedown',e=>e.preventDefault());
-on('selection-chat','click',()=>{addReferences(state.selected);$('selection-actions').hidden=true;});
+on('selection-chat','click',async()=>{
+    const refs=state.selected.slice();$('selection-actions').hidden=true;
+    if(!refs.length)return;
+    if(state.session&&!$('chat-thread-view').hidden){panel('chat');showThreadView();addReferences(refs);return;}
+    // 列表页/无会话时另起新对话，避免把上一个会话未发送的引用带进来。
+    state.references=[];renderChips();
+    await newSession();
+    addReferences(refs);
+});
 on('selection-semantic','click',()=>{const r=state.selected[0];$('selection-actions').hidden=true;if(r)return openNote('L3',{chapter_idx:r.chapter_idx,paragraph_index:r.paragraph_index,fingerprint:r.fingerprint});});
 on('selection-concept','click',async()=>{
     if(state.selected.length!==1){toast('解释概念时请只选一个段落内的术语');return;}
