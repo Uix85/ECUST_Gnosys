@@ -87,3 +87,4 @@ body{height:100dvh;overflow:hidden}.library-page{height:auto;min-height:100dvh;o
 #note-list-toggle{margin-left:auto}
 .tabbar{min-width:0}
 .tabbar button{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.reading-header{border-bottom:2px solid var(--blue)}
