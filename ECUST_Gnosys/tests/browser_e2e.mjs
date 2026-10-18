@@ -116,8 +116,10 @@ await page.click('[data-nav=search]');await page.fill('#search-input','社会关
 assert.ok(await page.evaluate(()=>document.querySelectorAll('.search-result').length>=2));
 await page.click('.search-result button >> nth=0');await page.click('#add-bookmark');await page.click('[data-nav=bookmarks]');await visible('.bookmark-row');
 pass('全文搜索、原文定位与书签',true);
-await page.selectOption('#font-size','22');await page.selectOption('#line-height','2.2');await page.reload();await ready();
-assert.equal(await page.evaluate(()=>document.querySelector('#font-size').value),'22');assert.equal(await page.evaluate(()=>document.querySelector('#line-height').value),'2.2');
+for(let i=0;i<5;i++){if((await page.evaluate(()=>localStorage.getItem('gnosys-font-size')))==='22')break;await page.click('#font-size-cycle');}
+for(let i=0;i<3;i++){if((await page.evaluate(()=>localStorage.getItem('gnosys-line-height')))==='2.2')break;await page.click('#line-height-cycle');}
+await page.reload();await ready();
+assert.equal(await page.evaluate(()=>localStorage.getItem('gnosys-font-size')),'22');assert.equal(await page.evaluate(()=>localStorage.getItem('gnosys-line-height')),'2.2');
 pass('阅读字号与行距持久化',true);
 await viewport(1440);
 const beforeResize=await page.evaluate(()=>{const r=document.querySelector('#inspector').getBoundingClientRect();return {width:r.width,x:r.right-2,y:r.bottom-2}});

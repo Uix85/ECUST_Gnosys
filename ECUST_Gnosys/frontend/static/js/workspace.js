@@ -403,7 +403,7 @@ on('search-form','submit',async e=>{e.preventDefault();const q=$('search-input')
 on('add-bookmark','click',async()=>{const ref=currentPosition();if(ref){await api(base+'/bookmarks',{reference:ref,label:ref.quote.slice(0,50)});toast('已添加书签');}});
 on('reader-scroll','scroll',()=>{clearTimeout(progressTimer);progressTimer=setTimeout(()=>{const ref=currentPosition();if(ref)api(base+'/state',ref,'PUT').catch(e=>toast(e.message));},500);});
 on('generate-semantic','click',()=>generate({layer:'L3',chapter_idx:state.chapter,mode:'fill_missing',spec_type:$('agent-spec').value}));
-on('show-semantic','change',()=>document.body.classList.toggle('hide-semantic',!$('show-semantic').checked));
+on('toggle-semantic-rail','click',()=>setSemanticVisible(document.body.classList.contains('hide-semantic')));
 on('note-layer','change',()=>{const layer=$('note-layer').value;if(layer==='L1')return openNote(layer);if(layer==='L2')return openNote(layer,{chapter_idx:state.chapter});const ref=state.selected[0]||currentPosition();if(!ref)return;const target={chapter_idx:ref.chapter_idx,paragraph_index:ref.paragraph_index,fingerprint:ref.fingerprint};if(layer==='L4'){const term=state.selected[0]?.quote || prompt('输入当前位置要解释的术语');if(!term)return;target.term=term;}return openNote(layer,target);});
 on('edit-note','click',()=>{state.editing=!state.editing;renderNote();if(state.editing)$('note-editor').focus();});
 on('note-editor','input',()=>{state.dirty=true;$('note-save-state').textContent='未保存';});on('save-note','click',saveNote);
@@ -435,7 +435,25 @@ on('selection-concept','click',async()=>{
     }
 });
 window.addEventListener('beforeunload',e=>{if(state.dirty){e.preventDefault();e.returnValue='';}});
-for(const [id,css,fallback] of [['font-size','--reading-size','18'],['line-height','--reading-line','1.9']]){const value=localStorage.getItem('gnosys-'+id)||fallback;$(id).value=value;document.documentElement.style.setProperty(css,value+(id==='font-size'?'px':''));on(id,'change',()=>{localStorage.setItem('gnosys-'+id,$(id).value);document.documentElement.style.setProperty(css,$(id).value+(id==='font-size'?'px':''));});}
+function initReadingCycles(){
+    const setup=(id,key,css,values,fallback,unit,label)=>{
+        const btn=$(id);if(!btn)return;
+        let value=localStorage.getItem('gnosys-'+key)||fallback;
+        if(!values.includes(value))value=fallback;
+        const apply=v=>{value=v;localStorage.setItem('gnosys-'+key,v);document.documentElement.style.setProperty(css,v+unit);btn.title=label+'：'+v;btn.setAttribute('aria-label',label+'：'+v);};
+        apply(value);
+        on(id,'click',()=>apply(values[(values.indexOf(value)+1)%values.length]));
+    };
+    setup('font-size-cycle','font-size','--reading-size',['16','18','20','22','24'],'18','px','字号');
+    setup('line-height-cycle','line-height','--reading-line',['1.6','1.9','2.2'],'1.9','','行距');
+}
+function setSemanticVisible(visible){
+    document.body.classList.toggle('hide-semantic',!visible);
+    const btn=$('toggle-semantic-rail');
+    if(btn){btn.setAttribute('aria-pressed',String(visible));btn.title='段落旁注：'+(visible?'开':'关');btn.setAttribute('aria-label','段落旁注：'+(visible?'开':'关'));}
+}
+initReadingCycles();
+setSemanticVisible(true);
 async function init(){initSidebars();if(innerWidth<=800){document.body.classList.add('no-navigation','no-inspector');$('toggle-nav').setAttribute('aria-expanded','false');$('toggle-panel').setAttribute('aria-expanded','false');}const data=await api(base+'/outline');state.nodes=data.items;await nav('outline');const match=location.hash.match(/source=(\d+):(\d+)/);await goto(match?Number(match[1]):state.chapter,match?Number(match[2]):0,false);await sessions();if(cfg.noteMode)await openNote('L1');window.GNOSYS.ready=true;}
 init().catch(e=>toast(e.message));
 })();

@@ -10,18 +10,22 @@
 <div class="workspace">
  <aside id="function-board" class="function-board" aria-label="阅读功能区">
   <div class="function-top">
-   <a id="back-library" class="icon-button" href="/" aria-label="返回书库" title="返回书库"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5"/><path d="M11 18l-6-6 6-6"/></svg></a>
-   <button id="toggle-nav" class="icon-button" aria-controls="navigation" aria-expanded="true" aria-label="左侧栏" title="左侧栏"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
-   <button id="toggle-panel" class="icon-button" aria-controls="inspector" aria-expanded="true" aria-label="右侧栏" title="右侧栏"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
+   <a id="back-library" class="icon-button rail-button" href="/" aria-label="返回书库" title="返回书库"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5"/><path d="M11 18l-6-6 6-6"/></svg></a>
+   <button id="toggle-nav" class="icon-button rail-button" aria-controls="navigation" aria-expanded="true" aria-label="左侧栏" title="左侧栏"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
+   <button id="toggle-panel" class="icon-button rail-button" aria-controls="inspector" aria-expanded="true" aria-label="右侧栏" title="右侧栏"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
   </div>
   <div class="function-divider"></div>
-  <div class="reading-controls">
-   <div class="reading-toolbar">
-    <div class="function-nav"><button id="previous" aria-label="上一章">←</button><button id="next" aria-label="下一章">→</button><button id="add-bookmark" class="icon-button" aria-label="添加书签" title="添加书签"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/></svg></button></div>
-    <div class="reading-settings"><label>字号 <select id="font-size"><option>16</option><option selected>18</option><option>20</option><option>22</option><option>24</option></select></label><label>行距 <select id="line-height"><option>1.6</option><option selected>1.9</option><option>2.2</option></select></label></div>
-   </div>
-   <div class="chapter-actions"><button id="generate-semantic">生成语义层</button><label class="muted"><input type="checkbox" id="show-semantic" checked> 段落旁注</label></div>
+  <div class="function-nav">
+   <button id="previous" class="icon-button rail-button" aria-label="上一章" title="上一章"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
+   <button id="next" class="icon-button rail-button" aria-label="下一章" title="下一章"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg></button>
+   <button id="add-bookmark" class="icon-button rail-button" aria-label="添加书签" title="添加书签"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/></svg></button>
+   <button id="font-size-cycle" class="rail-button rail-glyph" aria-label="字号：18" title="字号：18">A</button>
+   <button id="line-height-cycle" class="rail-button rail-glyph" aria-label="行距：1.9" title="行距：1.9">↕</button>
+   <button id="generate-semantic" class="icon-button rail-button" aria-label="生成语义层" title="生成语义层"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7L12 3z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z"/></svg></button>
+   <button id="toggle-semantic-rail" class="icon-button rail-button" aria-label="段落旁注：开" title="段落旁注：开" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 8h8M8 12h6"/></svg></button>
   </div>
+  <div class="function-divider rail-settings-divider"></div>
+  <a id="open-settings" class="icon-button rail-button" href="/settings" aria-label="设置" title="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></a>
  </aside>
  <aside id="navigation" class="navigation" aria-label="书籍导航">
   <div class="tabbar" role="tablist" aria-label="导航方式"><button role="tab" data-nav="outline" aria-selected="true">目录</button><button role="tab" data-nav="search" aria-selected="false">搜索</button><button role="tab" data-nav="bookmarks" aria-selected="false">书签</button></div>
@@ -65,7 +69,6 @@
   <div id="panel-resize" class="resize-handle" role="separator" aria-orientation="vertical" aria-label="调整对话与笔记面板宽度" aria-controls="inspector" title="拖动调整对话/笔记面板宽度；拖到最窄处自动收起" tabindex="0"></div>
  </aside>
 </div>
-<a id="open-settings" class="icon-button" href="/settings" aria-label="设置" title="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></a>
 <div id="selection-actions" class="selection-actions" hidden><button id="selection-chat">加入对话</button><button id="selection-concept">解释概念</button><button id="selection-semantic">语义笔记</button></div>
 <div id="toast" role="status" hidden></div>
 <script>window.GNOSYS = {bookId: {{ book_id|tojson }}, chapter: {{ chapter_idx }}, total: {{ total_chapters }}, title: {{ book.metadata.title|tojson }}, noteMode: {{ note_mode|default(false)|tojson }}};</script>
