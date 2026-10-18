@@ -166,7 +166,13 @@ async function goto(ci, pi = 0, updateHistory = true, edge = 'top') {
     if (updateHistory && !cfg.noteMode) history.replaceState({}, '', '/read/' + book + '/' + ci + '#source=' + ci + ':' + landingPi);
     clearTimeout(progressTimer); const ref = currentPosition(); if (ref) api(base + '/state', ref, 'PUT').catch(e => toast(e.message));
 }
-function locate(pi) { const target = $('paragraph-' + pi); if (!target) return; target.scrollIntoView({block: 'start'}); document.querySelectorAll('.located').forEach(n => n.classList.remove('located')); target.classList.add('located'); setTimeout(() => target.classList.remove('located'), 2600); }
+function locate(pi) {
+    const target = $('paragraph-' + pi), scroller = $('reader-scroll');
+    if (!target) return;
+    const top = scroller.scrollTop + target.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    scroller.scrollTo({top, behavior: 'smooth'});
+    document.querySelectorAll('.located').forEach(n => n.classList.remove('located')); target.classList.add('located'); setTimeout(() => target.classList.remove('located'), 2600);
+}
 async function jumpReference(ref) { const r = await api(base + '/reference/check', {references:[ref]}); const valid = r.items[0]; await goto(valid.chapter_idx, valid.paragraph_index); }
 async function openNote(layer, target = {}) {
     if (!canLeaveNote()) return null;
