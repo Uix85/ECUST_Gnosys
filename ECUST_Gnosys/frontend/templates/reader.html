@@ -16,8 +16,6 @@
   </div>
   <div class="function-divider"></div>
   <div class="function-nav">
-   <button id="previous" class="icon-button rail-button" aria-label="上一章" title="上一章"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-9 7 9 7z" fill="currentColor" stroke="none"/></svg></button>
-   <button id="next" class="icon-button rail-button" aria-label="下一章" title="下一章"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l9 7-9 7z" fill="currentColor" stroke="none"/></svg></button>
    <button id="add-bookmark" class="icon-button rail-button" aria-label="添加书签" title="添加书签"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/></svg></button>
    <button id="font-size-cycle" class="rail-button rail-glyph" aria-label="字号：18" title="字号：18">A</button>
    <button id="line-height-cycle" class="rail-button rail-glyph" aria-label="行距：1.9" title="行距：1.9">↕</button>
@@ -31,7 +29,7 @@
   <div class="tabbar" role="tablist" aria-label="导航方式"><button role="tab" data-nav="outline" aria-selected="true">目录</button><button role="tab" data-nav="search" aria-selected="false">搜索</button><button role="tab" data-nav="bookmarks" aria-selected="false">书签</button></div>
   <form id="search-form" hidden><label class="sr-only" for="search-input">书内全文搜索</label><input id="search-input" type="search" placeholder="搜索书内文字…" maxlength="200"><button>搜索</button></form>
   <div id="nav-results" class="nav-results" role="tabpanel"></div>
-  <footer class="nav-footer"><span id="chapter-counter"></span><span>本地书库</span></footer>
+  <footer class="nav-footer"><div class="chapter-pager"><button id="previous" class="pager-button" aria-label="上一章" title="上一章"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-9 7 9 7z" fill="currentColor" stroke="none"/></svg></button><span id="chapter-counter"></span><button id="next" class="pager-button" aria-label="下一章" title="下一章"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l9 7-9 7z" fill="currentColor" stroke="none"/></svg></button></div></footer>
   <div id="nav-resize" class="resize-handle" role="separator" aria-orientation="vertical" aria-label="调整目录宽度" aria-controls="navigation" title="拖动调整目录宽度；拖到最窄处自动收起" tabindex="0"></div>
  </aside>
  <main id="reading" class="reading" aria-label="阅读正文">
