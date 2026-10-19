@@ -8,6 +8,8 @@ const state = {chapter: cfg.chapter, nodes: [], paragraphs: [], references: [], 
     noteSentences: [],
     tocPinned: new Set(), tocClosed: new Set(), tocActive: new Set(), chapterNavLock: false};
 let chatStream, toastTimer, progressTimer, tocTimer, runStream, mention = null, noteRequest = 0, menuSessionId = '';
+const EDGE_BOUNCE_LIMIT = 34, EDGE_BOUNCE_TRIGGER = 180, EDGE_BOUNCE_MAX_PULL = 240;
+const edgeBounce = {direction:0, pull:0, events:0, timer:null};
 function toast(text) { $('toast').textContent = text; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 5500); }
 async function api(url, body, method) {
     const options = body === undefined ? {} : {method: method || 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)};
@@ -130,8 +132,18 @@ function jumpReaderScroll(top) {
     scroller.scrollTop = top;
     scroller.style.scrollBehavior = previous;
 }
+function resetEdgeBounce(animate = true) {
+    clearTimeout(edgeBounce.timer); edgeBounce.timer = null;
+    edgeBounce.direction = 0; edgeBounce.pull = 0; edgeBounce.events = 0;
+    const view = $('chapter-view'); if (!view) return;
+    if (!animate) { view.style.transition = ''; view.style.transform = ''; return; }
+    view.style.transition = 'transform 180ms cubic-bezier(.2,.7,.3,1)';
+    view.style.transform = 'translateY(0)';
+    edgeBounce.timer = setTimeout(() => { view.style.transition = ''; view.style.transform = ''; edgeBounce.timer = null; }, 190);
+}
 async function goto(ci, pi = 0, updateHistory = true, edge = 'top') {
     if (ci < 0 || ci >= cfg.total) return;
+    resetEdgeBounce(false);
     const chapterChanged = ci !== state.chapter;
     const version = ++state.generation;
     $('chapter-content').setAttribute('aria-busy', 'true');
@@ -604,12 +616,26 @@ on('reader-scroll','scroll',()=>{
 {
     const scroller=$('reader-scroll');
     scroller.addEventListener('wheel',e=>{
-        if(state.chapterNavLock)return;
+        if(state.chapterNavLock||!e.deltaY)return;
         const atTop=scroller.scrollTop<=4,atBottom=scroller.scrollTop+scroller.clientHeight>=scroller.scrollHeight-4;
-        const target=e.deltaY>0?(atBottom&&state.chapter<cfg.total-1?state.chapter+1:null):(atTop&&state.chapter>0?state.chapter-1:null);
-        if(target===null)return;
+        const direction=e.deltaY>0?1:-1, atEdge=direction>0?atBottom:atTop;
+        if(!atEdge){if(edgeBounce.direction)resetEdgeBounce(false);return;}
+        if(edgeBounce.direction&&edgeBounce.direction!==direction)resetEdgeBounce(false);
+        edgeBounce.direction=direction;
+        const magnitude=Math.abs(e.deltaY)*(e.deltaMode===1?16:e.deltaMode===2?scroller.clientHeight:1);
+        edgeBounce.pull=Math.min(EDGE_BOUNCE_MAX_PULL,edgeBounce.pull+magnitude);
+        edgeBounce.events+=1;
+        const distance=Math.min(EDGE_BOUNCE_LIMIT,4+edgeBounce.pull*.12);
+        const view=$('chapter-view');
+        view.style.transition='none';
+        view.style.transform='translateY('+(direction>0?-distance:distance)+'px)';
+        clearTimeout(edgeBounce.timer);
+        edgeBounce.timer=setTimeout(()=>resetEdgeBounce(true),260);
+        const target=direction>0?(state.chapter<cfg.total-1?state.chapter+1:null):(state.chapter>0?state.chapter-1:null);
+        if(target===null||edgeBounce.events<2||edgeBounce.pull<EDGE_BOUNCE_TRIGGER)return;
+        resetEdgeBounce(false);
         state.chapterNavLock=true;
-        goto(target,0,true,e.deltaY<0?'bottom':'top').catch(err=>toast(err.message)).finally(()=>setTimeout(()=>state.chapterNavLock=false,400));
+        goto(target,0,true,direction>0?'top':'bottom').catch(err=>toast(err.message)).finally(()=>setTimeout(()=>state.chapterNavLock=false,400));
     },{passive:true});
 }
 on('generate-semantic','click',()=>generate({layer:'L3',chapter_idx:state.chapter,mode:'fill_missing',spec_type:$('agent-spec').value}));
