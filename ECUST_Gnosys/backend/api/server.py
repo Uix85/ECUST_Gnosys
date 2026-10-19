@@ -123,7 +123,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=1)
 # ═══════════════════════════════════════════
 
 # 产品版本：按修改程度手动递增；书库页右下角展示。
-APP_VERSION = "β1.0"
+APP_VERSION = "Beta 1.0"
 
 # 书库置顶书籍（按目录 id 匹配，顺序即显示顺序；其余书籍保持原顺序）
 PINNED_BOOK_IDS = [
