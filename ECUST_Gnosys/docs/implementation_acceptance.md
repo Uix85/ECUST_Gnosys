@@ -19,8 +19,8 @@
 - [x] 对话执行：Agents SDK 流式 Runner 与 SQLiteSession、只读书籍工具、工具状态、原文来源、编号 SSE 续接、幂等请求和单会话并发保护。
 - [x] Markdown：本地固定版本渲染表格、嵌套列表、任务列表、引用、代码高亮、删除线、链接及数学公式；流式/历史共用渲染器，并清理危险 HTML 和链接。
 - [x] 恢复：浏览器刷新后续接且不重复内容；取消、模型失败及真实服务进程强制重启均保留部分回答并可重试；服务重启后候选稿可采纳。
-- [x] 离线/API/SDK 集成：`uv run python tests/test_workspace.py`，14 项通过，包含独立临时书库、真实 Agents SDK 调度、确定性假模型和真进程重启。
-- [x] 浏览器 E2E：Ego Browser 临时书库，22 项通过；1440/1024 CSS 像素视口均无横向溢出，浏览器无未捕获异常。
+- [x] 离线/API/SDK 集成：`uv run python tests/test_workspace.py`，16 项通过，包含独立临时书库、真实 Agents SDK 调度、确定性假模型、真实服务进程重启、EPUB 图片、旧四层数据 CRUD 和活动任务删书清理。
+- [x] 浏览器 E2E：Ego Browser 临时书库，30 项通过；390/1024/1440 CSS 像素视口均无横向溢出，并覆盖四层任务失败重试、取消、待核稿采纳和书库导入/删除；浏览器无未捕获异常。
 - [ ] 真实服务模型验收：按用户指示跳过，尚未用实际服务对四层任务和带划线、`@`、追问的对话做调用。
 - [x] 文档：工作区 README、应用 README、测试运行方式及可复核的浏览器报告/截图已更新。
 
@@ -29,13 +29,14 @@
 - 浏览器逐项结果：[browser-e2e.json](acceptance/browser-e2e.json)
 - 1440px 页面：[desktop-1440.png](acceptance/desktop-1440.png)
 - 1024px 页面：[desktop-1024.png](acceptance/desktop-1024.png)
+- 390px 手机页面：[mobile-390.png](acceptance/mobile-390.png)
 - 浏览器脚本：[browser_e2e.mjs](../tests/browser_e2e.mjs)
 - 隔离测试：[test_workspace.py](../tests/test_workspace.py)
 
 ## 最后一次检查
 
-- 离线集成：14 tests，6.24 秒，全部通过。
-- 浏览器端到端：22 项全部通过，CSS 视口精确为 1440px 和 1024px；根文档 scrollWidth 与视口相同。
-- `python -m compileall -q backend tests`、`node --check tests/browser_e2e.mjs`、`git diff --check` 均通过。
+- 离线集成：16 tests，全部通过；使用本地确定性模型替身，没有真实模型请求。
+- 浏览器端到端：30 项全部通过；390、1024、1440 CSS 像素视口下根文档 scrollWidth 与视口相同。
+- `uv run python -m compileall -q backend tests`、`node --check tests/browser_e2e.mjs`、`git diff --check` 均通过。
 - 浏览器与 API 验收使用临时生成的样书；没有迁移或修改用户书库。
-- 真实模型调用按用户要求暂缓；离线假模型通过 SDK 流程，不代表真实服务兼容性已验收。
+- 本轮完全离线；真实模型调用按用户要求跳过，离线假模型通过 SDK 流程不代表真实服务兼容性已验收。

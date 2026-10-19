@@ -20,14 +20,14 @@ BACKEND = ROOT / "backend"
 
 def default_book() -> str:
     """默认挑第一本有 book.db 的书；显式指定用 --book。"""
-    for path in sorted((ROOT / "books").iterdir()):
+    for path in sorted((ROOT / "database" / "books").iterdir()):
         if path.is_dir() and (path / "book.db").is_file():
             return path.name
-    raise SystemExit("books/ 下没找到带 book.db 的书")
+    raise SystemExit("database/books/ 下没找到带 book.db 的书")
 
 
 def refs_for(book_id: str, chapter_idx: int, count: int) -> list[dict]:
-    from agent import book as agent_book
+    from agent.tools import book as agent_book
 
     _, paragraphs, _ = agent_book.logical_paragraphs(book_id, chapter_idx)
     picked = []
@@ -82,12 +82,12 @@ def collect(db, run_id: str, elapsed: float) -> dict:
 
 async def run_batch(book_id: str, chapter_idx: int, count: int) -> dict:
     sys.path.insert(0, str(BACKEND))
-    from agent import book as agent_book  # noqa: E402
-    from agent import runs as agent_runs   # noqa: E402
-    from agent.config import load_config   # noqa: E402
+    from agent.tools import book as agent_book  # noqa: E402
+    from agent.runs import loop as agent_runs   # noqa: E402
+    from agent.runtime.config import load_config   # noqa: E402
     from db.schema import close_db, get_db  # noqa: E402
 
-    db_path = ROOT / "books" / book_id / "book.db"
+    db_path = ROOT / "database" / "books" / book_id / "book.db"
     refs = refs_for(book_id, chapter_idx, count)      # 先选段（只读），空就不动数据库
     if not refs:
         raise SystemExit(f"{book_id} 第 {chapter_idx} 章没有待处理段落（章号 0 起算，换个 --chapter）")

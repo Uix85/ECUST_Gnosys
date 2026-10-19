@@ -58,7 +58,7 @@ def needs_semantic(text: str) -> bool:
 
 
 def _book_db(book_id: str):
-    from agent.book import book_db
+    from agent.tools.book import book_db
     return book_db(book_id)
 
 
@@ -186,7 +186,7 @@ async def save_semantic(book_id: str, text: str = Body(...), content: str = Body
     source_text=选中原文（恢复高亮用），anchor_text=所在段落前缀（精确定位用）。"""
     db = _book_db(book_id)
     _ensure_columns(db, "semantic_layer", _SEM_COLS)
-    from agent.book import invalidate_generated_notes
+    from agent.tools.book import invalidate_generated_notes
     invalidate_generated_notes(db, source_text or text)
     bid = _book_int_id(db)
     # 记忆功能：content 缺省时统一填充全书层文本（占位，后续 AI 生成替换）
@@ -213,7 +213,7 @@ async def delete_semantic(book_id: str, text: str = ""):
     _ensure_columns(db, "semantic_layer", {"text_hash": "TEXT"})
     if text:
         h = _text_hash(text)
-        from agent.book import invalidate_generated_notes
+        from agent.tools.book import invalidate_generated_notes
         invalidate_generated_notes(db, text)
         db.execute("DELETE FROM semantic_layer WHERE text_hash = ?", (h,))
         db.commit()
@@ -324,9 +324,9 @@ async def list_para_semantic(book_id: str, chapter: int = -1):
     db = _book_db(book_id)
     _ensure_columns(db, "semantic_layer", _SEM_COLS)
     if chapter >= 0:
-        from agent.book import list_paragraph_notes
+        from agent.tools.book import list_paragraph_notes
         return {"items": list_paragraph_notes(book_id, chapter)}
-    from agent.book import list_paragraph_notes
+    from agent.tools.book import list_paragraph_notes
     from reader import locator
     chapter_count = locator.chapter_count(book_id) if locator.has_locator(book_id) else 0
     if chapter_count:
@@ -391,7 +391,7 @@ async def save_para_semantic(book_id: str, text: str = Body(...), content: str =
     后续 AI 生成只需把这三项换成模型输出，路由不变。"""
     db = _book_db(book_id)
     _ensure_columns(db, "semantic_layer", _SEM_COLS)
-    from agent.book import invalidate_generated_notes
+    from agent.tools.book import invalidate_generated_notes
     invalidate_generated_notes(db, text)
     bid = _book_int_id(db)
     h = _text_hash(text)
@@ -422,7 +422,7 @@ async def delete_para_semantic(book_id: str, text: str = ""):
     _ensure_columns(db, "semantic_layer", _SEM_COLS)
     if text:
         h = _text_hash(text)
-        from agent.book import invalidate_generated_notes
+        from agent.tools.book import invalidate_generated_notes
         invalidate_generated_notes(db, text)
         cur = db.execute("DELETE FROM semantic_layer WHERE text_hash = ? AND kind = 'para'", (h,))
     else:

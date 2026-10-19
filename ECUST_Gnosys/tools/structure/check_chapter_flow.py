@@ -16,8 +16,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(ROOT, "backend"))
 
 from reader import locator  # noqa: E402
-from agent.book import logical_paragraphs  # noqa: E402
-from agent import chapter as ct  # noqa: E402
+from agent.tools.book import logical_paragraphs  # noqa: E402
+from agent.layers import l2_chapter as ct  # noqa: E402
 
 OK, BAD = "  ✅", "  ❌"
 TXT = "精神现象学 黑格尔着 (精神现象学 黑格尔着.txt) (z-library.sk, 1lib.sk, z-lib.sk)_data"
@@ -89,7 +89,7 @@ def main() -> int:
     c.check("L3 缺口按实际算", isinstance(gaps, list),
             f"缺口 {len(gaps)}/{len(paragraphs)} 段")
     hits = materials["glossary_hits"]
-    from agent.index import glossary_entries
+    from agent.layers.l0_index import glossary_entries
     gl_all = len(glossary_entries())
     c.check("术语表是**预筛**过的（只放本章出现的）", len(hits) <= 20 and len(hits) < gl_all,
             f"命中 {len(hits)} / 全表 {gl_all}")

@@ -16,10 +16,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / 'backend'), str(ROOT / 'tests')]
 TEMP = tempfile.TemporaryDirectory(prefix='gnosys-test-')
 os.environ['GNOSYS_BOOKS_DIR'] = str(Path(TEMP.name) / 'books')
-os.environ['AGENT_API_KEY'] = 'offline-test-key'
+from db import paths as db_paths, settings as settings_db
+db_paths.SETTINGS_DB = Path(TEMP.name) / 'settings.db'
+settings_db.SETTINGS_DB = db_paths.SETTINGS_DB
+settings_db.save({'AGENT_API_KEY': 'offline-test-key'})
 from httpx import AsyncClient, ASGITransport
 from server import app
-from agent.book import book_db, get_paragraph, logical_paragraphs, split_sentences
+from agent.tools.book import book_db, get_paragraph, logical_paragraphs, split_sentences
 from reader.workspace import outline_nodes, get_note, baseline, save_note, reference
 from reader.import_document import import_document
 from db.schema import get_db, close_db
@@ -35,16 +38,16 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         r = await self.client.post('/upload', files={'file':('研究.txt', TEXT.encode(),'text/plain')})
         self.assertEqual(r.status_code,200,r.text)
         self.book = r.json()['folder']; fake_model.BOOK_ID=self.book
-        self.base='/api/workspace/'+self.book; self.runs='/api/agent/'+self.book+'/runs'; self.chat='/api/chat/'+self.book
+        self.base='/api/workspace/'+self.book; self.v1='/api/v1'; self.runs='/api/agent/'+self.book+'/runs'; self.chat='/api/chat/'+self.book
         self.model=ReadingModel()
-        self.patches=[patch('agent.layer_runs.build_model',return_value=self.model),patch('agent.run_service.build_model',return_value=self.model),patch('agent.chat.build_model',return_value=self.model)]
+        self.patches=[patch('agent.runs.layer.build_model',return_value=self.model),patch('agent.layers.l3_paragraph.build_model',return_value=self.model),patch('agent.chat.build_model',return_value=self.model)]
         for p in self.patches:p.start()
 
     async def asyncTearDown(self):
-        from agent.layer_runs import ACTIVE,CANCEL
+        from agent.runs.loop import _run_tasks, _cancel_signals
         from agent.chat import ACTIVE as CA,SIGNALS
-        for signal in list(CANCEL.values())+list(SIGNALS.values()):signal.set()
-        tasks=list(ACTIVE.values())+list(CA.values())
+        for signal in list(_cancel_signals.values())+list(SIGNALS.values()):signal.set()
+        tasks=list(_run_tasks.values())+list(CA.values())
         if tasks:await asyncio.gather(*tasks,return_exceptions=True)
         for p in self.patches:p.stop()
         await self.client.aclose()
@@ -70,6 +73,9 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         r=await self.client.post('/upload',files={'file':('研究.txt',TEXT.encode('gb18030'),'text/plain')})
         self.assertEqual(r.status_code,200,r.text);self.assertNotEqual(r.json()['folder'],self.book)
         original=book_db(self.book).execute('SELECT source_file FROM books').fetchone()[0];self.assertEqual(original,'研究.txt')
+        utf16=await self.client.post('/upload',files={'file':('UTF16.txt',TEXT.encode('utf-16'),'text/plain')})
+        self.assertEqual(utf16.status_code,200,utf16.text)
+        self.assertEqual(book_db(utf16.json()['folder']).execute('SELECT source_file FROM books').fetchone()[0],'UTF16.txt')
         for name,content in [('坏.epub',b'bad'),('空.txt',b''),('坏.txt',b'\x00\x01\x00'),('bad.pdf',b'bad')]:
             r=await self.client.post('/upload',files={'file':(name,content)});self.assertEqual(r.status_code,400,r.text)
         self.assertFalse(any(p.name.startswith('.import-') for p in Path(os.environ['GNOSYS_BOOKS_DIR']).iterdir()))
@@ -77,9 +83,17 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         from ebooklib import epub
         with tempfile.TemporaryDirectory() as d:
             b=epub.EpubBook();b.set_identifier('fixture');b.set_title('EPUB 测试');b.set_language('zh')
-            chapter=epub.EpubHtml(title='第一章',file_name='one.xhtml',lang='zh');chapter.content='<h1>第一章</h1><h2>第一节</h2><h3>子节</h3><p>'+SOURCE+'</p><img src="x" onerror="alert(1)">';b.add_item(chapter);b.spine=['nav',chapter];b.toc=(chapter,);b.add_item(epub.EpubNcx());b.add_item(epub.EpubNav());path=Path(d)/'书.epub';epub.write_epub(str(path),b)
+            from PIL import Image
+            pixels=Path(d)/'pixel.png';image_data=Image.new('RGB',(4,4));image_data.putdata([(220,40,80),(20,180,70),(30,60,220),(240,210,10)]*4);image_data.save(pixels)
+            image=epub.EpubItem(uid='pixel',file_name='images/pixel.png',media_type='image/png',content=pixels.read_bytes())
+            chapter=epub.EpubHtml(title='第一章',file_name='one.xhtml',lang='zh');chapter.content='<h1>第一章</h1><h2>第一节</h2><h3>子节</h3><p>'+SOURCE+'</p><img src="images/pixel.png" onerror="alert(1)">';b.add_item(chapter);b.add_item(image);b.spine=['nav',chapter];b.toc=(chapter,);b.add_item(epub.EpubNcx());b.add_item(epub.EpubNav());path=Path(d)/'书.epub';epub.write_epub(str(path),b)
             r=await self.client.post('/upload',files={'file':('书.epub',path.read_bytes(),'application/epub+zip')});self.assertEqual(r.status_code,200,r.text)
-            nodes=outline_nodes(r.json()['folder']);self.assertTrue(any(n['depth']>=2 for n in nodes),nodes)
+            folder=r.json()['folder'];nodes=outline_nodes(folder);self.assertTrue(any(n['depth']>=2 for n in nodes),nodes)
+            chapter=await self.client.get(f'/api/full_chapter/{folder}/0');self.assertEqual(chapter.status_code,200,chapter.text)
+            self.assertIn('images/pixel.png',chapter.json()['html']);self.assertNotIn('onerror',chapter.json()['html'])
+            served=await self.client.get(f'/read/{folder}/images/pixel.png');self.assertEqual(served.status_code,200);self.assertEqual(served.content[:8],b'\x89PNG\r\n\x1a\n')
+            served=await self.client.get(f'/api/v1/books/{folder}/images/pixel.png');self.assertEqual(served.status_code,200);self.assertEqual(served.content[:8],b'\x89PNG\r\n\x1a\n')
+            self.assertEqual((await self.client.get(f'/api/full_chapter/{folder}/99')).status_code,404)
 
     async def test_outline_reference_search_state_bookmarks(self):
         data=(await self.client.get(self.base+'/outline')).json()['items'];self.assertEqual(len({n['id'] for n in data}),len(data));self.assertTrue(any(n['depth']==2 for n in data))
@@ -93,6 +107,28 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         mark=(await self.client.post(self.base+'/bookmarks',json={'reference':ref})).json()['id'];self.assertEqual(len((await self.client.get(self.base+'/bookmarks')).json()['items']),1)
         await self.client.delete(self.base+'/bookmarks/'+mark);self.assertFalse((await self.client.get(self.base+'/bookmarks')).json()['items'])
         r=await self.client.get(self.base+'/chapter/0');self.assertEqual(r.status_code,200);self.assertEqual(r.json()['paragraphs'][3]['text'],SOURCE)
+
+    async def test_versioned_public_api_and_error_shape(self):
+        books=(await self.client.get(self.v1+'/books')).json()['items']
+        self.assertTrue(any(item['id']==self.book for item in books))
+        detail=await self.client.get(self.v1+'/books/'+self.book)
+        self.assertEqual(detail.status_code,200,detail.text)
+        self.assertGreater(detail.json()['chapter_count'],0)
+        outline=await self.client.get(self.v1+'/workspace/'+self.book+'/outline')
+        self.assertEqual(outline.status_code,200,outline.text)
+        self.assertTrue(outline.json()['items'])
+        shell=await self.client.get('/read/'+self.book+'/0')
+        self.assertEqual(shell.status_code,200,shell.text)
+        self.assertNotIn(SOURCE,shell.text)
+        chapter=await self.client.get(self.v1+'/workspace/'+self.book+'/chapter/0')
+        self.assertEqual(chapter.status_code,200,chapter.text)
+        self.assertIn(SOURCE,[paragraph['text'] for paragraph in chapter.json()['paragraphs']])
+        invalid=await self.client.get(self.v1+'/workspace/'+self.book+'/search')
+        self.assertEqual(invalid.status_code,422,invalid.text)
+        self.assertEqual(invalid.json()['error']['code'],'invalid_request')
+        missing=await self.client.get(self.v1+'/books/missing_data')
+        self.assertEqual(missing.status_code,404,missing.text)
+        self.assertIn('message',missing.json()['error'])
 
     async def test_locator_mode_keeps_reader_payload(self):
         """建了定位表之后，/chapter 必须仍给前端 html+tag（定位表只存文本）。"""
@@ -118,6 +154,67 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.execute('SELECT content FROM book_layer').fetchone()[0],'旧笔记')
         r=await self.client.post('/api/layer/concept/'+self.book,json={'term':'关系'});self.assertEqual(r.status_code,422)
         self.assertEqual((await self.client.get('/api/layer/concept/'+self.book+'?term=不存在')).json()['content'],'')
+
+    async def test_legacy_layer_crud_lists_and_paragraph_separation(self):
+        layers='/api/layer'
+        self.assertFalse((await self.client.get(layers+'/book/'+self.book)).json()['matched'])
+        self.assertEqual((await self.client.post(layers+'/book/'+self.book,json={'content':'## 全书旧格式'})).status_code,200)
+        book=(await self.client.get(layers+'/book/'+self.book)).json();self.assertTrue(book['matched']);self.assertEqual(book['content'],'## 全书旧格式')
+
+        chapters=(await self.client.get(layers+'/chapter_list/'+self.book)).json()['items']
+        self.assertTrue(chapters);self.assertFalse(chapters[0]['has_content'])
+        self.assertFalse((await self.client.get(layers+'/chapter/'+self.book+'/0')).json()['matched'])
+        self.assertEqual((await self.client.post(layers+'/chapter/'+self.book+'/0',json={'content':'## 章节旧格式'})).status_code,200)
+        chapter=(await self.client.get(layers+'/chapter/'+self.book+'/0')).json();self.assertTrue(chapter['matched']);self.assertEqual(chapter['content'],'## 章节旧格式')
+        self.assertTrue((await self.client.get(layers+'/chapter_list/'+self.book)).json()['items'][0]['has_content'])
+        self.assertEqual((await self.client.get(layers+'/chapter/'+self.book+'/99')).status_code,404)
+
+        text='  一段有意义的原文  '
+        body={'text':text,'content':'划线语义','source_text':'一段有意义的原文','anchor_text':'段落前缀'}
+        self.assertEqual((await self.client.post(layers+'/semantic/'+self.book,json=body)).status_code,200)
+        self.assertEqual((await self.client.get(layers+'/semantic/'+self.book,params={'text':'一段有意义的原文'})).json()['content'],'划线语义')
+        self.assertEqual((await self.client.get(layers+'/semantic_list/'+self.book)).json()['items'][0]['source_text'],'一段有意义的原文')
+        self.assertEqual((await self.client.post(layers+'/semantic/'+self.book,json={**body,'content':'更新语义'})).status_code,200)
+        self.assertEqual((await self.client.get(layers+'/semantic/'+self.book,params={'text':text})).json()['content'],'更新语义')
+        self.assertTrue((await self.client.delete(layers+'/semantic/'+self.book,params={'text':text})).json()['deleted'])
+        self.assertFalse((await self.client.get(layers+'/semantic/'+self.book,params={'text':text})).json()['matched'])
+
+        concept={'term':'社会关系','content':'概念解释','source_text':'社会关系','anchor_text':'段落前缀'}
+        self.assertEqual((await self.client.post(layers+'/concept/'+self.book,json=concept)).status_code,200)
+        self.assertEqual((await self.client.get(layers+'/concept/'+self.book,params={'term':'社会关系'})).json()['content'],'概念解释')
+        self.assertEqual((await self.client.get(layers+'/concept_list/'+self.book)).json()['items'][0]['term'],'社会关系')
+        self.assertEqual((await self.client.post(layers+'/concept/'+self.book,json={**concept,'content':'更新概念'})).status_code,200)
+        self.assertEqual((await self.client.get(layers+'/concept/'+self.book,params={'term':'社会关系'})).json()['content'],'更新概念')
+        self.assertTrue((await self.client.delete(layers+'/concept/'+self.book,params={'term':'社会关系'})).json()['deleted'])
+        self.assertFalse((await self.client.get(layers+'/concept/'+self.book,params={'term':'社会关系'})).json()['matched'])
+
+        para={'text':SOURCE,'content':'简要解释','detail':'逐段解释','sentences':['第一句解释','第二句解释']}
+        self.assertEqual((await self.client.post(layers+'/para_semantic/'+self.book,json=para)).status_code,200)
+        paragraph=(await self.client.get(layers+'/para_semantic/'+self.book,params={'chapter':0})).json()['items']
+        self.assertTrue(any(x['source_text']==SOURCE and x['sentences']==para['sentences'] for x in paragraph))
+        self.assertEqual((await self.client.get(layers+'/para_semantic/'+self.book)).status_code,200)
+        self.assertTrue((await self.client.get(self.base+'/notes')).json()['items'])
+        self.assertEqual((await self.client.delete(layers+'/para_semantic/'+self.book,params={'text':SOURCE})).json()['deleted'],1)
+        self.assertFalse(any(x['source_text']==SOURCE for x in (await self.client.get(layers+'/para_semantic/'+self.book,params={'chapter':0})).json()['items']))
+
+        await self.client.post(layers+'/semantic/'+self.book,json={'text':'这条划线不应随着段落批量删除','content':'保留的选区解释'})
+        await self.client.post(layers+'/para_semantic/'+self.book,json=para)
+        cleared=(await self.client.delete(layers+'/para_semantic/'+self.book)).json();self.assertGreaterEqual(cleared['deleted'],1)
+        self.assertTrue(any(x['content']=='保留的选区解释' for x in (await self.client.get(layers+'/semantic_list/'+self.book)).json()['items']))
+        self.assertFalse((await self.client.get(layers+'/para_semantic/'+self.book,params={'chapter':0})).json()['items'])
+
+    async def test_book_delete_cancels_active_work_and_removes_only_that_book(self):
+        r=await self.client.post('/upload',files={'file':('待删除.txt',TEXT.encode(),'text/plain')});self.assertEqual(r.status_code,200,r.text)
+        folder=r.json()['folder'];path=Path(os.environ['GNOSYS_BOOKS_DIR'])/folder
+        self.model.delay=.2
+        run=await self.client.post('/api/agent/'+folder+'/runs',json={'layer':'L2','target':{'chapter_idx':0}})
+        self.assertEqual(run.status_code,200,run.text)
+        deleted=await self.client.delete('/api/books/'+folder);self.assertEqual(deleted.status_code,200,deleted.text)
+        self.assertFalse(path.exists())
+        self.assertTrue(Path(os.environ['GNOSYS_BOOKS_DIR'],self.book).exists())
+        self.assertEqual((await self.client.delete('/api/books/'+folder)).status_code,404)
+        self.assertEqual((await self.client.delete('/api/books/not-a-book')).status_code,400)
+        self.assertEqual((await self.client.get('/notes/'+folder)).status_code,404)
 
     async def test_four_layers_actual_sdk_and_events(self):
         for layer,target in [('L1',{}),('L2',{'chapter_idx':0}),('L4',{'chapter_idx':0,'paragraph_index':3,'term':'社会关系'})]:
@@ -163,8 +260,11 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         r=await self.client.post(self.runs+'/'+ident+'/retry');result=await self.wait_run(r.json()['id']);self.assertEqual(result['status'],'failed',result)
         self.model.fail=False
         r=await self.client.post(self.runs+'/'+result['id']+'/retry');result=await self.wait_run(r.json()['id']);self.assertEqual(result['status'],'completed',result)
-        with patch.dict(os.environ,{'AGENT_RUN_TIMEOUT':'0.005'}):
+        settings_db.save({'AGENT_RUN_TIMEOUT':'0.005'})
+        try:
             self.model.delay=.1;r=await self.client.post(self.runs,json={'layer':'L1'});result=await self.wait_run(r.json()['id']);self.assertEqual(result['status'],'failed',result)
+        finally:
+            settings_db.save({'AGENT_RUN_TIMEOUT':'300'})
 
     async def test_chat_stream_history_sources_idempotency_and_export(self):
         sid=(await self.client.post(self.chat+'/sessions',json={})).json()['id']
@@ -203,13 +303,19 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         self.model.delay=.1
         sid=(await self.client.post(self.chat+'/sessions',json={})).json()['id'];r=await self.send(sid);mid=r.json()['message_id']
         r=await self.send(sid,req='other');self.assertEqual(r.status_code,409)
-        await asyncio.sleep(.25);await self.client.post(self.chat+f'/sessions/{sid}/messages/{mid}/cancel');data=await self.wait_chat(sid);self.assertEqual(data['messages'][-1]['status'],'canceled',data);self.assertTrue(data['messages'][-1]['content'])
+        for _ in range(500):
+            data=(await self.client.get(self.chat+'/sessions/'+sid)).json()
+            partial=next(m for m in data['messages'] if m['id']==mid)
+            if partial['content'] or partial['status'] not in ('queued','running'):break
+            await asyncio.sleep(.01)
+        self.assertTrue(partial['content'],partial)
+        await self.client.post(self.chat+f'/sessions/{sid}/messages/{mid}/cancel');data=await self.wait_chat(sid);self.assertEqual(data['messages'][-1]['status'],'canceled',data);self.assertTrue(data['messages'][-1]['content'])
         self.model.delay=0
         r=await self.client.post(self.chat+f'/sessions/{sid}/messages/{mid}/retry',json={'request_id':'retry-1'});self.assertEqual(r.status_code,200,r.text);data=await self.wait_chat(sid);self.assertEqual(data['messages'][-1]['status'],'completed',data)
         self.model.fail=True;r=await self.send(sid,req='failing');self.assertEqual(r.status_code,200);data=await self.wait_chat(sid);self.assertEqual(data['messages'][-1]['status'],'failed',data)
 
     async def test_chat_tool_budget_exhaustion_still_answers(self):
-        from agent.config import AgentConfig
+        from agent.runtime.config import AgentConfig
         cfg = AgentConfig(base_url='http://offline', model='fake', api_key='offline-test-key',
                           request_timeout=5, max_requests=8, max_tool_calls=0,
                           run_timeout=30, max_parallel=1)
@@ -239,7 +345,7 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         db.execute("INSERT INTO chat_messages(id,session_id,role,content,status,created_at) VALUES('interrupted',?,'assistant','partial','running','now')",(sid,));db.commit()
         from agent.chat import recover
         recover(self.book);row=db.execute("SELECT * FROM chat_messages WHERE id='interrupted'").fetchone();self.assertEqual(row['content'],'partial');self.assertEqual(row['status'],'interrupted')
-        from agent.layer_runs import validate_result
+        from agent.layers.policy import validate_result
         with self.assertRaises(ValueError):validate_result(self.book,{'content':'test','sources':[{'chapter_idx':1,'paragraph_index':0,'quote':SOURCE}]},{(0,3):[SOURCE]})
         r=await self.client.get('/read/'+self.book+'/0');self.assertEqual(r.status_code,200,r.text)
         r=await self.client.get('/notes/'+self.book);self.assertEqual(r.status_code,200,r.text)
@@ -249,7 +355,7 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         long_text = ('社会关系在实践中不断变化。' * 800) + '\n' + ('交往形成生活秩序。' * 800)
         r = await self.client.post('/upload', files={'file': ('长文本.txt', long_text.encode())})
         book = r.json()['folder']
-        from agent.outline import section_context
+        from agent.tools.context import section_context
         context = section_context(book, 0, 0)
         self.assertFalse(context['is_heading']); self.assertGreater(context['section_size'], 0)
         r = await self.client.post('/api/agent/' + book + '/runs', json={'layer': 'L1'})
@@ -305,8 +411,11 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
             r=await self.client.post(self.runs,json=body);self.assertIn(r.status_code,(404,409,422),r.text)
         sid=(await self.client.post(self.chat+'/sessions',json={})).json()['id']
         r=await self.send(sid,refs=[{'node_id':'missing'}]);self.assertEqual(r.status_code,409)
-        with patch.dict(os.environ,{'AGENT_API_KEY':''}):
+        settings_db.save({'AGENT_API_KEY':''})
+        try:
             r=await self.send(sid);self.assertEqual(r.status_code,422)
+        finally:
+            settings_db.save({'AGENT_API_KEY':'offline-test-key'})
         r=await self.client.get('/api/workspace/..%5Cother_data/outline');self.assertEqual(r.status_code,404)
 
 
@@ -318,12 +427,12 @@ class ProcessRecoveryTest(unittest.IsolatedAsyncioTestCase):
             folder = Path(import_document(source, books)).name
             with socket.socket() as probe:
                 probe.bind(('127.0.0.1', 0)); port = probe.getsockname()[1]
-            env = {**os.environ, 'GNOSYS_BOOKS_DIR': str(books), 'AGENT_API_KEY': 'offline-test-key'}
+            env = {**os.environ, 'GNOSYS_BOOKS_DIR': str(books)}
             helper = ROOT / 'tests' / 'restart_server.py'
             process = None
 
             async def start():
-                child = await asyncio.create_subprocess_exec(sys.executable, str(helper), str(books), str(port),
+                child = await asyncio.create_subprocess_exec(sys.executable, str(helper), str(books), str(port), str(settings_db.SETTINGS_DB),
                     cwd=ROOT, env=env, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
                 async with AsyncClient(timeout=2) as client:
                     for _ in range(100):

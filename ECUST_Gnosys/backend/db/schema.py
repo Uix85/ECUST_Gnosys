@@ -1,7 +1,7 @@
 """
 SQLite schema and connection management for the reader.
 
-Database file: books/{book_folder}/book.db
+Database file: database/books/{book_folder}/book.db
 基础数据表：books / chapters / paragraphs（正文 + 段落）
 阅读笔记表：book_layer / chapter_layer / semantic_layer / concept_layer
 Agent 表：agent_runs / agent_run_tasks / agent_run_events / agent_notes

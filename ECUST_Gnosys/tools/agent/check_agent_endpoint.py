@@ -4,8 +4,8 @@
 端点不通就没必要往下做。
 
 用法：
-    uv run python tools/check_agent_endpoint.py                      # 用 .env 里的模型
-    uv run python tools/check_agent_endpoint.py qwen3.8-flash gpt-5.4-mini
+    uv run python tools/agent/check_agent_endpoint.py                 # 用数据库中的模型
+    uv run python tools/agent/check_agent_endpoint.py qwen3.8-flash gpt-5.4-mini
 """
 
 import json
@@ -16,6 +16,9 @@ from pathlib import Path
 import httpx
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "backend"))
+from agent.runtime.config import load_config
+
 BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 
@@ -30,23 +33,9 @@ TOOL_PROMPT = [
     {"role": "user", "content": "这本书有哪些章？必须调用 get_book_outline。"}]
 
 
-def session_header(env):
+def session_header(session_id):
     """opencode.ai 的 Go 订阅路由要求 x-opencode-session，缺了会 MissingSessionID。"""
-    return {"x-opencode-session": env["AGENT_SESSION_ID"]} if env.get("AGENT_SESSION_ID") else {}
-
-
-def read_env():
-    values = {}
-    for name in (".env", ".env.secrets"):
-        path = ROOT / name
-        if not path.is_file():
-            continue
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                values[k.strip()] = v.strip().strip('"').strip("'")
-    return values
+    return {"x-opencode-session": session_id} if session_id else {}
 
 
 def probe(client, url, headers, label, payload):
@@ -123,22 +112,22 @@ def _is_json(value):
 
 
 def main():
-    env = read_env()
-    base_url = env.get("AGENT_API_BASE_URL", "").rstrip("/")
-    api_key = env.get("AGENT_API_KEY", "")
-    models = sys.argv[1:] or [env.get("AGENT_MODEL", "")]
+    config = load_config()
+    base_url = config.base_url
+    api_key = config.api_key
+    models = sys.argv[1:] or [config.model]
     models = [m for m in models if m]
     if not base_url or not api_key:
-        print("请先在 .env / .env.secrets 里配好 AGENT_API_BASE_URL 和 AGENT_API_KEY")
+        print("请先打开设置页配置模型服务地址和 API 密钥")
         return 1
     print(f"端点: {base_url}   模型: {', '.join(models)}\n")
 
     for ua_label, headers in (("带浏览器 UA", {"Authorization": f"Bearer {api_key}",
                                             "User-Agent": BROWSER_UA, "Accept": "application/json",
-                                            **session_header(env)}),
+                                            **session_header(config.session_id)}),
                               ("默认 UA(app 当前行为)", {"Authorization": f"Bearer {api_key}",
                                                     "Content-Type": "application/json",
-                                                    **session_header(env)})):
+                                                    **session_header(config.session_id)})):
         print(f"════ {ua_label} ════")
         with httpx.Client(timeout=90) as client:
             for model in models:

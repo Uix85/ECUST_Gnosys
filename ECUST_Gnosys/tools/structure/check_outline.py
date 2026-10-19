@@ -20,13 +20,13 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 
 def books() -> list[str]:
-    return [p.name for p in sorted((ROOT / "books").iterdir())
+    return [p.name for p in sorted((ROOT / "database" / "books").iterdir())
             if p.is_dir() and (p / "book.db").is_file()]
 
 
 def scan(book: str, chapter: int | None, tree: bool) -> None:
-    from agent import book as agent_book
-    from agent import outline as book_outline
+    from agent.tools import book as agent_book
+    from agent.tools import outline as book_outline
 
     n_ch = 0
     while True:

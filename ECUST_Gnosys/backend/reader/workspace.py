@@ -10,7 +10,7 @@ from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import Response
 from bs4 import BeautifulSoup
 
-from agent.book import book_db, fingerprint, get_paragraph, logical_paragraphs, normalize_text, list_paragraph_notes, text_hash
+from agent.tools.book import book_db, fingerprint, get_paragraph, logical_paragraphs, normalize_text, list_paragraph_notes, text_hash
 from reader.book_service import load_book_cached, _get_toc_pages, _build_chapters
 from reader.import_epub import clean_html_content
 
@@ -33,7 +33,7 @@ def chapters(book_id):
 
 
 def outline_nodes(book_id):
-    from agent.outline import structure
+    from agent.tools.context import structure
     nodes = []
     for ci, chapter in enumerate(chapters(book_id)):
         _, paras, _ = logical_paragraphs(book_id, ci)
@@ -176,7 +176,7 @@ def get_note(book_id, layer, target):
     if layer == 'L1':
         old = db.execute('SELECT content,updated_at FROM book_layer LIMIT 1').fetchone()
     elif layer == 'L2':
-        from agent.tools import _chapter_layer_row
+        from agent.tools.reading import _chapter_layer_row
         bid = db.execute('SELECT id FROM books LIMIT 1').fetchone()[0]
         old = _chapter_layer_row(db, bid, target['chapter_idx'], book_id)
     else:
@@ -229,7 +229,7 @@ async def get_outline(book_id: str):
 
 @router.get('/chapter/{chapter_idx}')
 async def get_chapter(book_id: str, chapter_idx: int):
-    from agent.book import chapter_html, paragraph_blocks
+    from agent.tools.book import chapter_html, paragraph_blocks
     chapter, paras, total = logical_paragraphs(book_id, chapter_idx)
     _, original_html, _ = chapter_html(book_id, chapter_idx)
     # 定位表的段落只存文本；正文 HTML 与标签名从同一套切段现取，按下标对齐（切段口径是同一个函数）

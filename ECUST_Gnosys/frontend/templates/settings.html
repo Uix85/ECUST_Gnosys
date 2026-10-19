@@ -15,27 +15,26 @@
 .settings-row.checkbox{grid-template-columns:minmax(0,1fr) auto}
 .settings-foot{display:flex;align-items:center;gap:12px;margin-top:16px;flex-wrap:wrap}
 .settings-foot .muted{font-size:12px}
-.settings-warn{margin-top:12px;font-size:12px;color:#b45309}
 .settings-ok{color:#15803d}
 </style></head>
 <body class="library-page">
 <main class="settings-shell">
  <a id="settings-back" class="settings-back" href="/" title="返回">返回</a>
- <div class="library-top"><div><div class="eyebrow">SETTINGS</div><h1>设置</h1><p>改完即存到项目根目录的 <code>.env</code>（密钥写 <code>.env.secrets</code>），下一次 Agent 调用生效，无需重启。</p></div></div>
+ <div class="library-top"><div><div class="eyebrow">SETTINGS</div><h1>设置</h1><p>设置和 API 密钥保存在项目目录的 <code>database/settings.db</code>，下一次 Agent 调用生效，无需重启。</p></div></div>
  <div id="status-line" class="muted" role="status"></div>
  <form id="settings-form"></form>
  <div class="settings-foot"><button class="primary" id="save" type="submit" form="settings-form">保存并返回</button><button id="reload" type="button">重新读取</button><span class="muted" id="saved-at"></span></div>
- <div id="warn" class="settings-warn" hidden></div>
  <p class="muted" id="paths" style="margin-top:22px;font-size:12px"></p>
 </main>
 <script>
 const form=document.getElementById('settings-form'),statusLine=document.getElementById('status-line'),
-      savedAt=document.getElementById('saved-at'),warn=document.getElementById('warn'),paths=document.getElementById('paths');
+      savedAt=document.getElementById('saved-at'),paths=document.getElementById('paths');
 const GROUPS=[['连接',['AGENT_API_BASE_URL','AGENT_MODEL','AGENT_API_KEY','AGENT_SESSION_ID']],
               ['预算与超时',['AGENT_REQUEST_TIMEOUT','AGENT_MAX_REQUESTS','AGENT_MAX_TOOL_CALLS','AGENT_RUN_TIMEOUT','AGENT_MAX_RETRIES','AGENT_MAX_PARALLEL']],
               ['行为',['AGENT_DISABLE_THINKING']]];
-const SOURCE={env:'来自进程环境变量（优先级最高，改文件不生效）',secrets:'来自 .env.secrets',dotenv:'来自 .env',default:'默认值'};
+const SOURCE={database:'来自 database/settings.db',default:'默认值'};
 let fields=[];
+async function errorMessage(response){const data=await response.json().catch(()=>({}));return data.error?.message||data.detail||`HTTP ${response.status}`;}
 function row(f){
   const wrap=document.createElement('div');
   if(f.kind==='bool'){
@@ -65,16 +64,14 @@ function render(data){
     const card=document.createElement('section');card.className='settings-card';
     const h=document.createElement('h2');h.textContent=title;card.append(h);
     const p=document.createElement('p');p.className='hint';
-    p.textContent=title==='连接'?'模型服务地址与凭据。密钥留空表示不修改，不会回显。':'单个 Agent 任务的预算；章节层等长任务可用环境变量单独放宽。';
+    p.textContent=title==='连接'?'模型服务地址与凭据。密钥留空表示不修改，不会回显。':'单个 Agent 任务的预算设置。';
     card.append(p);
     for(const key of keys){const f=fields.find(x=>x.key===key);if(f)card.append(row(f));}
     form.append(card);
   }
   statusLine.textContent=data.ready?`已配置：${data.model} @ ${data.base_url}`:'尚未配置 API 密钥，Agent 功能不可用';
   statusLine.className=data.ready?'settings-ok':'';
-  paths.textContent=`配置文件：${data.root}\\${data.files.env} 与 ${data.root}\\${data.files.secrets}`;
-  warn.hidden=!data.overridden.length;
-  warn.textContent=data.overridden.length?`这些键被进程环境变量覆盖，改文件不会生效：${data.overridden.join('、')}`:'';
+  paths.textContent='设置数据库：'+data.settings_db;
 }
 function settingsReturnTarget(){
   let target=new URLSearchParams(location.search).get('from')||'';
@@ -85,7 +82,7 @@ function settingsReturnTarget(){
   return target;
 }
 async function load(){
-  const r=await fetch('/api/settings');if(!r.ok)throw new Error(await r.text());render(await r.json());
+  const r=await fetch('/api/v1/settings');if(!r.ok)throw new Error(await errorMessage(r));render(await r.json());
 }
 form.addEventListener('submit',async e=>{
   e.preventDefault();const values={};
@@ -97,9 +94,9 @@ form.addEventListener('submit',async e=>{
   }
   document.getElementById('save').disabled=true;
   try{
-    const r=await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values})});
+    const r=await fetch('/api/v1/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values})});
     const data=await r.json();
-    if(!r.ok)throw new Error(data.detail||'保存失败');
+    if(!r.ok)throw new Error(data.error?.message||data.detail||'保存失败');
     render(data);savedAt.textContent='已保存 '+new Date().toLocaleTimeString();
     location.assign(settingsReturnTarget());
   }catch(err){statusLine.className='';statusLine.textContent='保存失败：'+err.message;}

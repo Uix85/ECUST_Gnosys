@@ -6,7 +6,9 @@ import sys
 root = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(root), str(root / 'backend'), str(root / 'tests')]
 os.environ['GNOSYS_BOOKS_DIR'] = sys.argv[1]
-os.environ['AGENT_API_KEY'] = 'offline-test-key'
+from db import paths as db_paths, settings as settings_db
+db_paths.SETTINGS_DB = Path(sys.argv[3])
+settings_db.SETTINGS_DB = db_paths.SETTINGS_DB
 
 from server import app
 from agent import chat

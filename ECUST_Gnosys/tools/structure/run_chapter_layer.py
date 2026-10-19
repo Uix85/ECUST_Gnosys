@@ -18,10 +18,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(ROOT, "backend"))
 
 from reader import locator  # noqa: E402
-from agent.book import logical_paragraphs  # noqa: E402
-from agent.config import load_config  # noqa: E402
-from agent.engine import AgentTask, build_model  # noqa: E402
-from agent import chapter as ct  # noqa: E402
+from agent.tools.book import logical_paragraphs  # noqa: E402
+from agent.runtime.config import load_config  # noqa: E402
+from agent.runtime.engine import AgentTask, build_model  # noqa: E402
+from agent.layers import l2_chapter as ct  # noqa: E402
 
 LEGACY_DIR = os.path.join(ROOT, "tmp", "legacy_chapter_layer")
 

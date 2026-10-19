@@ -48,7 +48,7 @@ class ReadingModel(Model):
                 if 'read_book_paragraph' not in names:
                     return ModelResponse([call('load_skill',{'name':'concept-mapping'})], Usage(), None)
                 return ModelResponse([call('read_book_paragraph',{'chapter_idx':ci,'paragraph_index':pi})], Usage(), None)
-            from agent.book import get_paragraph
+            from agent.tools.book import get_paragraph
             text = get_paragraph(BOOK_ID,ci,pi)['text']
             value = {'has_definition':'inferred','definition_note':'从本章使用中归纳','confusion_types':['idiom_shift'],
                      'senses':[{'reading':'实践中形成的社会联系','common_reading':'人与事物之间的联系','scope':'chapter','range_note':'本章',
@@ -60,7 +60,7 @@ class ReadingModel(Model):
         else:
             name = 'submit_result'
             if 'short' in next(t for t in tools if t.name==name).params_json_schema['properties']:
-                from agent.book import split_sentences
+                from agent.tools.book import split_sentences
                 source = materials.get('target',{}).get('text',SOURCE)
                 value = {'short':'社会关系在实践中形成。','detail':'这段文字说明交往与实践相互联系，并由此形成生活秩序。','sentences':['说明实践的作用。']*len(split_sentences(source))}
             else:

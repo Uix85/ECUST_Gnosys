@@ -29,7 +29,7 @@ def _write_txt(path, output_root):
     text = text.replace('\r\n', '\n').replace('\r', '\n')
     if not text.strip():
         raise ValueError('TXT 没有正文')
-    from agent.outline import heading_level, split_inline_heading
+    from agent.tools.context import heading_level, split_inline_heading
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     sections, title, content = [], Path(path).stem, []
     for line in lines:

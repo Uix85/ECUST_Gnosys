@@ -27,7 +27,7 @@ def scan(book: str, apply: bool) -> tuple[int, int, int]:
     from db.schema import close_db, get_db
     from reader.import_epub import _extract_headings
 
-    path = ROOT / "books" / book / "book.db"
+    path = ROOT / "database" / "books" / book / "book.db"
     db = get_db(str(path))
     already = filled = none = 0
     for row in db.execute("SELECT id, spine_order, heading_json, content_html FROM chapters").fetchall():
@@ -53,7 +53,7 @@ def main() -> int:
     parser.add_argument("--book", default=None, help="只处理某本书库")
     parser.add_argument("--apply", action="store_true", help="真正写入")
     args = parser.parse_args()
-    base = ROOT / "books"
+    base = ROOT / "database" / "books"
     targets = [args.book] if args.book else [p.name for p in sorted(base.iterdir())
                                             if (p / "book.db").is_file()]
     total_new = 0

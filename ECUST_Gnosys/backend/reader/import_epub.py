@@ -26,6 +26,7 @@ if BACKEND_DIR not in sys.path:
 from bs4 import BeautifulSoup, Comment
 
 from reader.models import TOCEntry, BookMetadata
+from db.paths import BOOKS_DIR
 
 
 # --- Utilities ---
@@ -196,7 +197,7 @@ def _extract_headings(html: str) -> str:
     历史数据里这个字段有的是那位另一版代码导入的（带 level+text），格式保持一致。
 
     TXT 导入会先把可识别的“标题 + 全角空格 + 正文”拆成标题标签，因此这里也能抽到；
-    真正的无标记纯文本仍由 agent/outline.py 的文本行模式推断兜底。
+    真正的无标记纯文本仍由 agent/tools/context.py 的文本行模式推断兜底。
     """
     import re as _re
     out = []
@@ -290,9 +291,9 @@ def _split_paragraphs(html: str) -> list:
 
 def _write_epub(epub_path: str, books_dir: str = None) -> str:
     """【EPUB处理入库】将 EPUB 解析后写入 SQLite 数据库，返回输出目录路径
-    books_dir 缺省为仓库根 books/（不依赖当前工作目录）"""
+    books_dir 缺省为 database/books/（不依赖当前工作目录）"""
     if books_dir is None:
-        books_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "books")
+        books_dir = BOOKS_DIR
     from db.schema import get_db
     
     # 1. Load & extract

@@ -25,7 +25,7 @@ _BACKEND_DIR = str(_Path(__file__).resolve().parents[1])
 if _BACKEND_DIR not in _sys.path:
     _sys.path.insert(0, _BACKEND_DIR)
 
-from agent.book import book_db, fingerprint, normalize_text, split_paragraphs
+from agent.tools.book import book_db, fingerprint, normalize_text, split_paragraphs
 
 
 def _now() -> str:
@@ -197,7 +197,7 @@ def assign_paragraphs(nodes: list[dict], n_paragraphs: int) -> list[dict]:
     """把每段挂到"就近的标题祖先"：返回 [{para_idx, node_idx, seg_in_node}]。
 
     标题行归它自己的节点；其余段落归"文档序上最后一个已出现的标题节点"
-    （与 agent.outline 的 path 栈同语义：出现更浅的标题时自动回到那一层）。
+    （与 agent.tools.context 的 path 栈同语义：出现更浅的标题时自动回到那一层）。
     """
     head_at: dict[int, int] = {}                   # 标题段落 → nodes 下标
     for i, node in enumerate(nodes):
@@ -271,7 +271,7 @@ def headings_from_spine(book_id: str, spine_rows: list[int], paragraphs: list[di
 
 def headings_from_text(paragraphs: list[dict], rules=None) -> list[dict]:
     """txt 源（无 h 标签）：按文本行模式推断层级。"""
-    from agent import outline as book_outline
+    from agent.tools import outline as book_outline
     out = []
     for para in paragraphs:
         pi = para.get("para_index", para.get("paragraph_index"))
@@ -290,7 +290,7 @@ def build(book_id: str, apply: bool = False) -> dict:
     """构建（或只报告）。不重跑正文解析，只读库里已有的 chapters.content_html。"""
     from reader.book_service import (load_book_cached, _get_toc_pages, _build_chapters,
                                      _slice_content, _chapter_slice_anchors, _get_unified_html_cached)
-    from agent.book import split_paragraphs
+    from agent.tools.book import split_paragraphs
 
     book = load_book_cached(book_id)
     if book is None:

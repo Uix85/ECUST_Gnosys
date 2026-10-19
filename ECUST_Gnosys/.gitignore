@@ -10,8 +10,7 @@ wheels/
 .venv
 
 # Custom
-.env
-.env.secrets
+/database/settings.db*
 
 # SQLite WAL 模式运行时文件（非真实数据，不应入库）
 *.db-shm
