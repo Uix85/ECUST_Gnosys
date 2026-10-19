@@ -29,18 +29,24 @@ def _write_txt(path, output_root):
     text = text.replace('\r\n', '\n').replace('\r', '\n')
     if not text.strip():
         raise ValueError('TXT 没有正文')
-    from agent.outline import heading_level
+    from agent.outline import heading_level, split_inline_heading
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     sections, title, content = [], Path(path).stem, []
     for line in lines:
-        level = heading_level(line)
+        inline = split_inline_heading(line)
+        if inline:
+            line_title, line_body, level = inline
+        else:
+            line_title, line_body, level = line, '', heading_level(line)
         if level == 0 and content:
             sections.append((title, content))
             content = []
         if level == 0:
-            title = line
+            title = line_title
         tag = 'h' + str(min(6, level + 1)) if level is not None else 'p'
-        content.append(f'<{tag}>{html.escape(line)}</{tag}>')
+        content.append(f'<{tag}>{html.escape(line_title)}</{tag}>')
+        if line_body:
+            content.append(f'<p>{html.escape(line_body)}</p>')
     if content:
         sections.append((title, content))
     output = Path(output_root) / (Path(path).stem + '_data')

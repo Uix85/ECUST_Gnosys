@@ -195,8 +195,8 @@ def _extract_headings(html: str) -> str:
     语义层要「上承章节结构」、术语解释要用子节作为适用范围，全都要靠它。
     历史数据里这个字段有的是那位另一版代码导入的（带 level+text），格式保持一致。
 
-    txt 源没有标题标签，这里会返回空数组 —— 那种情况改由 agent/outline.py 的
-    文本行模式推断兜底（见 backend/agent/outline.py）。
+    TXT 导入会先把可识别的“标题 + 全角空格 + 正文”拆成标题标签，因此这里也能抽到；
+    真正的无标记纯文本仍由 agent/outline.py 的文本行模式推断兜底。
     """
     import re as _re
     out = []

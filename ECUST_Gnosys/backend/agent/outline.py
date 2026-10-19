@@ -78,7 +78,28 @@ def heading_level(text: str, rules: tuple = DEFAULT_RULES) -> int | None:
     # 方括号批注但不匹配任何模式：按「节」处理（译者加的批注一律是结构标记）
     if t != body and body:
         return 2
-    return None
+
+
+_INLINE_HEADING_RE = re.compile(r'^(.{2,40}?)[\u3000]{2,}(.+)$', re.DOTALL)
+
+
+def split_inline_heading(text: str, rules: tuple = DEFAULT_RULES) -> tuple[str, str, int] | None:
+    """拆出“标题 + 全角空格 + 正文”的标题部分。
+
+    TXT 常见 `1．调查区域的界定　　为了……`；整行超过标题长度阈值，
+    但前段本身完全符合标题规则。返回 (标题, 正文, 层级)，不是标题返回 None。
+    """
+    t = (text or '').strip()
+    match = _INLINE_HEADING_RE.match(t)
+    if not match:
+        return None
+    title, body = match.group(1).strip(), match.group(2).strip()
+    if not title or not body:
+        return None
+    level = heading_level(title, rules)
+    if level is None:
+        return None
+    return title, body, level
 
 
 def _spine_order(book_id: str, chapter_idx: int) -> int | None:
@@ -198,10 +219,14 @@ def structure(book_id: str, chapter_idx: int, rules: tuple = DEFAULT_RULES) -> d
         headings = headings or headings_from_field(book_id, chapter_idx, paragraphs) or []
         if not headings:
             for para in paragraphs:
-                level = heading_level(para["text"], rules)
+                inline = split_inline_heading(para["text"], rules)
+                if inline:
+                    title, _body, level = inline
+                else:
+                    title, level = para["text"].strip(), heading_level(para["text"], rules)
                 if level is None:
                     continue
-                headings.append({"level": level, "title": para["text"].strip(),
+                headings.append({"level": level, "title": title,
                                  "paragraph_index": para["paragraph_index"]})
         node_ranges = _node_ranges_from_headings(headings, n_paragraphs)
 
@@ -312,4 +337,7 @@ if __name__ == "__main__":                       # ponytail: 一条可运行的�
     assert heading_level("那超感官界因此乃是作为现象的现象。") is None      # 正文，不是标题
     assert heading_level("所以万有引力的规律或纯粹概念与特殊的规律相对立。") is None
     assert heading_level("1．这是一句以编号开头但其实是正文的完整句子。") is None
+    assert split_inline_heading("1．调查区域的界定　　为了对人们的生活进行研究。") == ("1．调查区域的界定", "为了对人们的生活进行研究。", 4)
+    assert split_inline_heading("第二章：调查区域　　江村经济") == ("第二章：调查区域", "江村经济", 0)
+    assert split_inline_heading("这是一段正文　　不是标题") is None
     print("agent.outline 自检通过")

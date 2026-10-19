@@ -275,9 +275,14 @@ def headings_from_text(paragraphs: list[dict], rules=None) -> list[dict]:
     out = []
     for para in paragraphs:
         pi = para.get("para_index", para.get("paragraph_index"))
-        level = book_outline.heading_level(para["text"], rules or book_outline.DEFAULT_RULES)
+        active_rules = rules or book_outline.DEFAULT_RULES
+        inline = book_outline.split_inline_heading(para["text"], active_rules)
+        if inline:
+            title, _body, level = inline
+        else:
+            title, level = para["text"].strip(), book_outline.heading_level(para["text"], active_rules)
         if level is not None:
-            out.append({"level": level, "title": para["text"].strip(), "paragraph_index": pi})
+            out.append({"level": level, "title": title, "paragraph_index": pi})
     return out
 
 
