@@ -59,7 +59,8 @@ on('generate-note','click',async()=>{if(!state.note)return;if(state.dirty){toast
 
 on('note-list-toggle','click',toggleNoteList);
 on('refresh-runs','click',refreshRuns);on('back-to-sessions','click',async()=>{showSessionList();await sessions();});
-on('rename-session','click',async()=>{const id=menuSessionId;closeSessionMenu();if(!id)return;const item=state.sessions.find(s=>s.id===id);if(!item)return;const title=prompt('对话名称',item.title||'新对话');if(title===null)return;const value=title.trim();if(!value){toast('对话名称不能为空');return;}await api(chatBase+'/sessions/'+id,{title:value},'PATCH');await sessions();if(state.session===id)$('chat-session-title').textContent=value;toast('已重命名');});
+on('chat-session-title','dblclick',()=>state.session?renameSession(state.session):null);
+on('rename-session','click',()=>{const id=menuSessionId;closeSessionMenu();return renameSession(id);});
 on('delete-session','click',async()=>{const id=menuSessionId;closeSessionMenu();if(!id||!confirm('删除此对话及其历史？'))return;if(state.session===id){if(chatStream)chatStream.close();state.session='';state.messages=[];state.activeMessage='';setChatActive(false);renderMessages();}await api(chatBase+'/sessions/'+id,undefined,'DELETE');await sessions();showSessionList();toast('对话已删除');});
 on('export-chat','click',()=>{if(state.session)location.href=chatBase+'/sessions/'+state.session+'/export';});on('send-chat','click',send);
 on('stop-chat','click',async()=>{if(state.activeMessage)await api(chatBase+'/sessions/'+state.session+'/messages/'+state.activeMessage+'/cancel',{});});

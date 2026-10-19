@@ -102,6 +102,19 @@ async function sessions() {
     state.sessions = data.items || [];
     renderSessionList();
 }
+async function renameSession(id) {
+    closeSessionMenu();
+    if (!id) return;
+    const item = state.sessions.find(session => session.id === id);
+    const title = prompt('对话名称', item?.title || '新对话');
+    if (title === null) return;
+    const value = title.trim();
+    if (!value) { toast('对话名称不能为空'); return; }
+    await api(chatBase + '/sessions/' + id, {title: value}, 'PATCH');
+    await sessions();
+    if (state.session === id) $('chat-session-title').textContent = value;
+    toast('已重命名');
+}
 async function openSession(id) {
     stashDraft();
     state.session = id;

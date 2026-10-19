@@ -66,6 +66,10 @@ await page.click('#rename-session');
 await page.waitForFunction(()=>document.querySelector('.session-item-title')?.textContent==='浏览器验收对话');
 await page.click('.session-item');
 await page.waitForFunction(()=>!document.querySelector('#chat-thread-view').hidden&&document.querySelectorAll('.message.assistant').length===1);
+await page.evaluate(()=>window.prompt=()=> '双击重命名测试');
+await page.evaluate(()=>document.getElementById('chat-session-title').dispatchEvent(new MouseEvent('dblclick',{bubbles:true})));
+await page.waitForFunction(()=>document.getElementById('chat-session-title').textContent==='双击重命名测试');
+pass('双击会话标题重命名',true);
 
 await page.fill('#chat-input','@实践');
 assert.ok(await page.evaluate(()=>document.querySelectorAll('#mention-list [role=option]').length>=2));

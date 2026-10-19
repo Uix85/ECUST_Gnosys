@@ -135,6 +135,7 @@ CHANGELOG = [
             "修复：会话草稿隔离、笔记保存、移动端侧栏、设置返回安全",
             "工程：workspace.js 拆分为 core/layout/reader/notes/agent/chat/main",
             "书库页版本号可点击查看更新日志",
+            "对话标题支持双击重命名",
         ],
     },
 ]
