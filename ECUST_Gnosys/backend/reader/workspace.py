@@ -10,9 +10,10 @@ from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import Response
 from bs4 import BeautifulSoup
 
-from agent.tools.book import book_db, fingerprint, get_paragraph, logical_paragraphs, normalize_text, list_paragraph_notes, text_hash
+from agent.tools.book import book_db, fingerprint, get_paragraph, logical_paragraphs, normalize_text, list_paragraph_notes, split_sentences, text_hash
 from reader.book_service import load_book_cached, _get_toc_pages, _build_chapters
 from reader.import_epub import clean_html_content
+from reader import search_index
 
 router = APIRouter(prefix='/api/workspace/{book_id}', tags=['workspace'])
 
@@ -251,16 +252,62 @@ async def get_chapter(book_id: str, chapter_idx: int):
     return {'title': chapter['title'], 'chapter_idx': chapter_idx, 'total': total, 'paragraphs': paras, 'images': images}
 
 
+def _search_excerpt(text: str, query: str):
+    """Return the sentence containing the first raw match plus its marker span."""
+    at = text.lower().find(query.lower())
+    if at < 0:
+        return text[:240].strip(), None, 0
+    offset, excerpt, match_start = 0, None, 0
+    for sentence in split_sentences(text):
+        start = text.find(sentence, offset)
+        if start < 0:
+            start = offset
+        end = start + len(sentence)
+        offset = end
+        if start <= at < end:
+            excerpt, match_start = sentence, at - start
+            break
+    if excerpt is None:
+        match_start = at - max(0, at - 80)
+        excerpt = text[max(0, at - 80):at + 160]
+    leading = len(excerpt) - len(excerpt.lstrip())
+    excerpt = excerpt.strip()
+    match_start = max(0, match_start - leading)
+    if len(excerpt) > 240:
+        left = max(0, match_start - 100)
+        right = min(len(excerpt), left + 240)
+        if right - left < 240:
+            left = max(0, right - 240)
+        prefix = '…' if left else ''
+        suffix = '…' if right < len(excerpt) else ''
+        match_start = match_start - left + len(prefix)
+        excerpt = prefix + excerpt[left:right] + suffix
+    return excerpt, match_start, len(query)
+
+
 @router.get('/search')
 async def search(book_id: str, q: str = Query(..., min_length=1, max_length=200), limit: int = Query(50, ge=1, le=200)):
+    indexed = search_index.search_paragraphs(book_id, book_db(book_id), q, limit)
+    if indexed is not None:
+        titles = {ci: chapter['title'] for ci, chapter in enumerate(chapters(book_id))}
+        items = []
+        for ci, pi, text in indexed:
+            excerpt, match_start, match_length = _search_excerpt(text, q)
+            items.append({'chapter_idx': ci, 'paragraph_index': pi,
+                          'title': titles.get(ci, ''), 'excerpt': excerpt,
+                          'match_start': match_start, 'match_length': match_length})
+            if len(items) == limit:
+                return {'items': items, 'truncated': True}
+        return {'items': items, 'truncated': False}
     items = []
     for ci in range(len(chapters(book_id))):
         chapter, paras, _ = logical_paragraphs(book_id, ci)
         for p in paras:
             if normalize_text(q) in normalize_text(p['text']):
-                at = max(0, p['text'].lower().find(q.lower()) - 70)
+                excerpt, match_start, match_length = _search_excerpt(p['text'], q)
                 items.append({'chapter_idx': ci, 'paragraph_index': p['paragraph_index'], 'fingerprint': p['fingerprint'],
-                              'title': chapter['title'], 'excerpt': p['text'][at:at+240]})
+                              'title': chapter['title'], 'excerpt': excerpt,
+                              'match_start': match_start, 'match_length': match_length})
                 if len(items) == limit:
                     return {'items': items, 'truncated': True}
     return {'items': items, 'truncated': False}
