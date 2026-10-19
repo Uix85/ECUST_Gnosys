@@ -215,7 +215,8 @@ async function openNote(layer, target = {}) {
     const data = await api(base + '/note/read', {layer, target});
     if (id !== noteRequest) return null;
     state.note = data; state.dirty = false; state.editing = false; setNoteLayerUI(layer); $('note-editor').value = data.content;
-    $('note-target').textContent = layer === 'L1' ? cfg.title : layer === 'chat' ? '对话摘记' : (state.nodes.find(n => n.id === 'c' + target.chapter_idx)?.title || '') + (target.paragraph_index !== undefined ? ' · 段落 ' + (target.paragraph_index + 1) : '') + (target.term ? ' · ' + target.term : '');
+    const targetLabel = layer === 'L1' ? cfg.title : layer === 'chat' ? '对话摘记' : (state.nodes.find(n => n.id === 'c' + target.chapter_idx)?.title || '') + (target.paragraph_index !== undefined ? ' · 段落 ' + (target.paragraph_index + 1) : '') + (target.term ? ' · ' + target.term : '');
+    $('note-target').textContent = targetLabel; $('note-target').title = targetLabel;
     $('note-save-state').textContent = ''; $('generate-note').disabled = layer === 'chat'; renderNote(); panel('note');
     return data;
 }

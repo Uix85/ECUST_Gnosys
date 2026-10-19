@@ -81,10 +81,9 @@
    </div>
   </section>
   <section id="note-panel" class="panel" role="tabpanel" aria-label="四层阅读笔记" hidden>
-   <div class="note-target" id="note-target"></div>
    <div class="note-controls"><label>规范 <select id="agent-spec"><option value="general">通用规范</option><option value="hegel_helin">黑格尔贺麟译本</option></select></label><button id="generate-note" class="primary">AI 生成</button><button id="note-list-toggle">笔记列表</button></div>
    <div id="note-list" hidden></div>
-   <div class="note-controls note-actions"><button id="edit-note">编辑</button><button id="save-note" class="primary" hidden>保存</button><button id="cancel-note" hidden>取消</button><button id="export-note">导出 Markdown</button><span id="note-save-state" role="status"></span></div>
+   <div class="note-controls note-actions"><div class="note-target" id="note-target"></div><button id="edit-note">编辑</button><button id="save-note" class="primary" hidden>保存</button><button id="cancel-note" hidden>取消</button><button id="export-note">导出 Markdown</button><span id="note-save-state" role="status"></span></div>
    <label class="sr-only" for="note-editor">笔记 Markdown</label><textarea id="note-editor" hidden spellcheck="false"></textarea><div id="note-preview" class="markdown note-preview"></div>
   </section>
   <section id="runs-panel" class="panel" role="tabpanel" aria-label="任务与待核稿" hidden><div class="note-toolbar"><span>生成进度与候选稿</span><button id="refresh-runs">刷新</button></div><div id="runs-list" class="runs-list"></div><div id="pending-list" class="runs-list"></div></section>
