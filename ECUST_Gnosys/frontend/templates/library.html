@@ -5,7 +5,7 @@
 <input type="file" id="book-file" accept=".epub,.txt" hidden><div id="upload-status" role="status" class="muted"></div>
 <div class="book-grid" id="book-grid"></div>
 <div class="library-empty" id="library-empty" hidden><h2>在这里开始一本书</h2><p>导入 EPUB 或 TXT，阅读进度和笔记会保存在本机。</p></div>
-<p id="no-results" class="library-empty" hidden>没有匹配的书籍</p><div id="toast" role="status" hidden></div></main>
+<p id="no-results" class="library-empty" hidden>没有匹配的书籍</p><div id="toast" role="status" hidden></div></main><span id="app-version" class="app-version" title="当前版本">{{ app_version }}</span>
 <script>
 const input=document.getElementById('book-file'),trigger=document.getElementById('import-book'),status=document.getElementById('upload-status');
 const grid=document.getElementById('book-grid'),search=document.getElementById('library-search'),empty=document.getElementById('library-empty');

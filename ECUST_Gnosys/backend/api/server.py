@@ -122,6 +122,9 @@ app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=1)
 # HTTP 路由
 # ═══════════════════════════════════════════
 
+# 产品版本：按修改程度手动递增；书库页右下角展示。
+APP_VERSION = "β1.0"
+
 # 书库置顶书籍（按目录 id 匹配，顺序即显示顺序；其余书籍保持原顺序）
 PINNED_BOOK_IDS = [
     "精神现象学 黑格尔着 (精神现象学 黑格尔着.txt) (z-library.sk, 1lib.sk, z-lib.sk)_data",
@@ -131,7 +134,7 @@ PINNED_BOOK_IDS = [
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def library_view(request: Request):
     """书库页面只返回静态壳；书目由版本化 API 提供。"""
-    return templates.TemplateResponse(request, "library.html", {})
+    return templates.TemplateResponse(request, "library.html", {"app_version": APP_VERSION})
 
 
 # ── 设置页：读写 database/settings.db ──
