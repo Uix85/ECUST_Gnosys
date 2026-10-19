@@ -482,9 +482,11 @@ function renderMessages() {
         const content=mdBox(m.content);content.classList.add('message-content');row.append(content);
         const refs=el('div','reference-chips');(m.references||[]).forEach(ref=>refs.append(refChip(ref)));row.append(refs);
         if(m.error)row.append(el('p','message-error',m.error));
-        if(m.role==='assistant'){
-            const actions=el('div','message-actions');actions.append(button('复制',()=>navigator.clipboard.writeText(m.content)),button('保存为笔记',async()=>{if(!canLeaveNote())return;state.dirty=false;await openNote('chat',{message_id:m.id});$('note-editor').value=m.content;state.dirty=true;state.editing=true;renderNote();await saveNote();}));
-            if(['failed','canceled','interrupted'].includes(m.status))actions.append(button('重试',async()=>{const r=await api(chatBase+'/sessions/'+state.session+'/messages/'+m.id+'/retry',{request_id:crypto.randomUUID()});await loadSession();}));row.append(actions);
+        if(m.role==='assistant'&&!['queued','running'].includes(m.status)){
+            const actions=el('div','message-actions');
+            if(m.content.trim())actions.append(button('复制',()=>navigator.clipboard.writeText(m.content)),button('保存为笔记',async()=>{if(!canLeaveNote())return;state.dirty=false;await openNote('chat',{message_id:m.id});$('note-editor').value=m.content;state.dirty=true;state.editing=true;renderNote();await saveNote();}));
+            if(['failed','canceled','interrupted'].includes(m.status))actions.append(button('重试',async()=>{const r=await api(chatBase+'/sessions/'+state.session+'/messages/'+m.id+'/retry',{request_id:crypto.randomUUID()});await loadSession();}));
+            if(actions.children.length)row.append(actions);
         }
         box.append(row);
     }
@@ -731,7 +733,8 @@ function noteListLabel(note) {
     } else if (content) {
         label = note.target.term || content;
     }
-    return note.layer + ' · ' + ((label.split(/\r?\n/).find(Boolean) || note.key).slice(0,45));
+    const layerName = note.layer === 'chat' ? '对话摘记' : note.layer;
+    return layerName + ' · ' + ((label.split(/\r?\n/).find(Boolean) || note.key).slice(0,45));
 }
 async function toggleNoteList() {
     const box = $('note-list');
