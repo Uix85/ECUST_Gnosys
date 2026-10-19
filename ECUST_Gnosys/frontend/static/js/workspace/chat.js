@@ -115,6 +115,55 @@ async function renameSession(id) {
     if (state.session === id) $('chat-session-title').textContent = value;
     toast('已重命名');
 }
+function renameSessionInline(id) {
+    if (!id) return;
+    const title = $('chat-session-title');
+    if (!title || title.isContentEditable) return;
+    const original = (title.textContent || '').trim() || '新对话';
+    let done = false;
+    const stopEditing = () => {
+        title.contentEditable = 'false';
+        title.classList.remove('editing');
+    };
+    const finish = async save => {
+        if (done) return;
+        done = true;
+        const value = title.textContent.replace(/\s+/g, ' ').trim();
+        title.removeEventListener('keydown', onKey);
+        title.removeEventListener('blur', onBlur);
+        if (!save || !value) {
+            stopEditing(); title.textContent = original;
+            if (save && !value) toast('对话名称不能为空');
+            return;
+        }
+        if (value === original) { stopEditing(); title.textContent = original; return; }
+        stopEditing(); title.textContent = value;
+        try {
+            await api(chatBase + '/sessions/' + id, {title: value}, 'PATCH');
+            await sessions();
+            if (state.session === id) title.textContent = value;
+            toast('已重命名');
+        } catch (error) {
+            title.textContent = original;
+            toast(error.message);
+        }
+    };
+    const onKey = event => {
+        if (event.key === 'Enter') { event.preventDefault(); finish(true); }
+        else if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+    };
+    const onBlur = () => finish(true);
+    title.contentEditable = 'true';
+    title.classList.add('editing');
+    title.focus();
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(title);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    title.addEventListener('keydown', onKey);
+    title.addEventListener('blur', onBlur);
+}
 async function openSession(id) {
     stashDraft();
     state.session = id;
