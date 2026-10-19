@@ -5,11 +5,11 @@ const base = '/api/workspace/' + book, agentBase = '/api/agent/' + book + '/runs
 const $ = id => document.getElementById(id);
 const state = {chapter: cfg.chapter, nodes: [], paragraphs: [], references: [], session: '', sessions: [], messages: [], activeMessage: '',
     note: null, dirty: false, editing: false, selected: [], nav: 'outline', panel: 'chat', generation: 0,
-    noteSentences: [],
     tocPinned: new Set(), tocClosed: new Set(), tocActive: new Set(), chapterNavLock: false};
 let chatStream, toastTimer, progressTimer, tocTimer, runStream, mention = null, noteRequest = 0, menuSessionId = '';
-const EDGE_BOUNCE_LIMIT = 34, EDGE_BOUNCE_TRIGGER = 180, EDGE_BOUNCE_MAX_PULL = 240;
-const edgeBounce = {direction:0, pull:0, events:0, timer:null};
+const EDGE_BOUNCE_LIMIT = 34, EDGE_BOUNCE_TRIGGER = 180, EDGE_BOUNCE_MAX_PULL = 1200;
+const EDGE_HARD_PULL = 720, EDGE_HARD_EVENTS = 5, EDGE_ARM_WINDOW = 1400;
+const edgeBounce = {direction:0, pull:0, events:0, armed:false, idleTimer:null, cleanupTimer:null, armTimer:null};
 function toast(text) { $('toast').textContent = text; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 5500); }
 async function api(url, body, method) {
     const options = body === undefined ? {} : {method: method || 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)};
@@ -132,18 +132,41 @@ function jumpReaderScroll(top) {
     scroller.scrollTop = top;
     scroller.style.scrollBehavior = previous;
 }
+function disarmEdgeBounce() {
+    clearTimeout(edgeBounce.armTimer); edgeBounce.armTimer = null; edgeBounce.armed = false;
+}
 function resetEdgeBounce(animate = true) {
-    clearTimeout(edgeBounce.timer); edgeBounce.timer = null;
+    clearTimeout(edgeBounce.idleTimer); edgeBounce.idleTimer = null;
+    clearTimeout(edgeBounce.cleanupTimer); edgeBounce.cleanupTimer = null;
     edgeBounce.direction = 0; edgeBounce.pull = 0; edgeBounce.events = 0;
     const view = $('chapter-view'); if (!view) return;
     if (!animate) { view.style.transition = ''; view.style.transform = ''; return; }
     view.style.transition = 'transform 180ms cubic-bezier(.2,.7,.3,1)';
     view.style.transform = 'translateY(0)';
-    edgeBounce.timer = setTimeout(() => { view.style.transition = ''; view.style.transform = ''; edgeBounce.timer = null; }, 190);
+    edgeBounce.cleanupTimer = setTimeout(() => { view.style.transition = ''; view.style.transform = ''; edgeBounce.cleanupTimer = null; }, 190);
+}
+function armEdgeBounce() {
+    edgeBounce.idleTimer = null;
+    resetEdgeBounce(true);
+    edgeBounce.armed = true;
+    clearTimeout(edgeBounce.armTimer);
+    edgeBounce.armTimer = setTimeout(disarmEdgeBounce, EDGE_ARM_WINDOW);
+}
+function applyEdgePull(direction, magnitude) {
+    edgeBounce.direction = direction;
+    edgeBounce.pull = Math.min(EDGE_BOUNCE_MAX_PULL, edgeBounce.pull + magnitude);
+    edgeBounce.events += 1;
+    const distance = Math.min(EDGE_BOUNCE_LIMIT, 4 + edgeBounce.pull * .12);
+    const view = $('chapter-view');
+    clearTimeout(edgeBounce.cleanupTimer); edgeBounce.cleanupTimer = null;
+    view.style.transition = 'none';
+    view.style.transform = 'translateY(' + (direction > 0 ? -distance : distance) + 'px)';
+    clearTimeout(edgeBounce.idleTimer);
+    edgeBounce.idleTimer = setTimeout(armEdgeBounce, 260);
 }
 async function goto(ci, pi = 0, updateHistory = true, edge = 'top') {
     if (ci < 0 || ci >= cfg.total) return;
-    resetEdgeBounce(false);
+    resetEdgeBounce(false); disarmEdgeBounce();
     const chapterChanged = ci !== state.chapter;
     const version = ++state.generation;
     $('chapter-content').setAttribute('aria-busy', 'true');
@@ -191,7 +214,7 @@ async function openNote(layer, target = {}) {
     const id = ++noteRequest;
     const data = await api(base + '/note/read', {layer, target});
     if (id !== noteRequest) return null;
-    state.note = data; state.dirty = false; state.editing = false; state.noteSentences = []; setNoteLayerUI(layer); $('note-editor').value = data.content;
+    state.note = data; state.dirty = false; state.editing = false; setNoteLayerUI(layer); $('note-editor').value = data.content;
     $('note-target').textContent = layer === 'L1' ? cfg.title : layer === 'chat' ? '对话摘记' : (state.nodes.find(n => n.id === 'c' + target.chapter_idx)?.title || '') + (target.paragraph_index !== undefined ? ' · 段落 ' + (target.paragraph_index + 1) : '') + (target.term ? ' · ' + target.term : '');
     $('note-save-state').textContent = ''; $('generate-note').disabled = layer === 'chat'; renderNote(); panel('note');
     return data;
@@ -203,8 +226,6 @@ async function openSemantic(p) {
     const target = {chapter_idx:state.chapter, paragraph_index:p.paragraph_index, fingerprint:p.fingerprint};
     const data = await openNote('L3', target);
     if (!data || data.target.chapter_idx !== target.chapter_idx || data.target.paragraph_index !== target.paragraph_index) return;
-    state.noteSentences = p.note?.sentences || [];
-    renderNote();
 }
 async function openNoteLayer(layer) {
     if (layer === 'L1') return openNote(layer);
@@ -212,23 +233,14 @@ async function openNoteLayer(layer) {
     const ref = state.selected[0] || currentPosition(); if (!ref) return;
     const target = {chapter_idx:ref.chapter_idx, paragraph_index:ref.paragraph_index, fingerprint:ref.fingerprint};
     if (layer === 'L4') { const term = state.selected[0]?.quote || prompt('输入当前位置要解释的术语'); if (!term) return; target.term = term; }
-    const data = await openNote(layer, target);
-    if (layer === 'L3' && data) {
-        const p = state.paragraphs.find(x => x.paragraph_index === target.paragraph_index);
-        state.noteSentences = p?.note?.sentences || [];
-        renderNote();
-    }
+    await openNote(layer, target);
 }
 function renderNote() {
     const editing = state.editing;
     $('note-editor').hidden = !editing; $('note-preview').hidden = editing;
-    $('edit-note').hidden = editing; $('save-note').hidden = !editing;
+    $('edit-note').hidden = editing; $('save-note').hidden = !editing; $('cancel-note').hidden = !editing;
     const preview = $('note-preview');
     preview.innerHTML = renderMarkdown($('note-editor').value);
-    if (state.note?.layer === 'L3' && state.noteSentences?.length) {
-        preview.append(el('h4', '', '逐句解释'));
-        state.noteSentences.forEach((s, index) => preview.append(mdBox((index + 1) + '. ' + s)));
-    }
 }
 async function saveNote() {
     if (!state.note) return;
@@ -610,6 +622,7 @@ on('previous','click',()=>goto(state.chapter-1));on('next','click',()=>goto(stat
 on('search-form','submit',async e=>{e.preventDefault();const q=$('search-input').value.trim();if(!q)return;const data=await api(base+'/search?q='+encodeURIComponent(q));$('nav-results').replaceChildren();data.items.forEach(item=>{const row=el('div','search-result');row.append(button(item.title,()=>goto(item.chapter_idx,item.paragraph_index)),el('small','',item.excerpt));$('nav-results').append(row);});if(!data.items.length)$('nav-results').append(el('p','muted','没有找到匹配文字'));if(data.truncated)$('nav-results').append(el('p','muted','结果较多，请缩小搜索范围'));});
 on('add-bookmark','click',async()=>{const ref=currentPosition();if(ref){await api(base+'/bookmarks',{reference:ref,label:ref.quote.slice(0,50)});toast('已添加书签');}});
 on('reader-scroll','scroll',()=>{
+    if(edgeBounce.direction||edgeBounce.armed){const s=$('reader-scroll');if(s.scrollTop>4&&s.scrollTop+s.clientHeight<s.scrollHeight-4){resetEdgeBounce(false);disarmEdgeBounce();}}
     clearTimeout(tocTimer);tocTimer=setTimeout(updateTocFromScroll,80);
     clearTimeout(progressTimer);progressTimer=setTimeout(()=>{const ref=currentPosition();if(ref)api(base+'/state',ref,'PUT').catch(e=>toast(e.message));},500);
 });
@@ -619,21 +632,15 @@ on('reader-scroll','scroll',()=>{
         if(state.chapterNavLock||!e.deltaY)return;
         const atTop=scroller.scrollTop<=4,atBottom=scroller.scrollTop+scroller.clientHeight>=scroller.scrollHeight-4;
         const direction=e.deltaY>0?1:-1, atEdge=direction>0?atBottom:atTop;
-        if(!atEdge){if(edgeBounce.direction)resetEdgeBounce(false);return;}
-        if(edgeBounce.direction&&edgeBounce.direction!==direction)resetEdgeBounce(false);
-        edgeBounce.direction=direction;
+        if(!atEdge){if(edgeBounce.direction)resetEdgeBounce(false);disarmEdgeBounce();return;}
+        if(edgeBounce.direction&&edgeBounce.direction!==direction){resetEdgeBounce(false);disarmEdgeBounce();}
         const magnitude=Math.abs(e.deltaY)*(e.deltaMode===1?16:e.deltaMode===2?scroller.clientHeight:1);
-        edgeBounce.pull=Math.min(EDGE_BOUNCE_MAX_PULL,edgeBounce.pull+magnitude);
-        edgeBounce.events+=1;
-        const distance=Math.min(EDGE_BOUNCE_LIMIT,4+edgeBounce.pull*.12);
-        const view=$('chapter-view');
-        view.style.transition='none';
-        view.style.transform='translateY('+(direction>0?-distance:distance)+'px)';
-        clearTimeout(edgeBounce.timer);
-        edgeBounce.timer=setTimeout(()=>resetEdgeBounce(true),260);
+        applyEdgePull(direction,magnitude);
         const target=direction>0?(state.chapter<cfg.total-1?state.chapter+1:null):(state.chapter>0?state.chapter-1:null);
-        if(target===null||edgeBounce.events<2||edgeBounce.pull<EDGE_BOUNCE_TRIGGER)return;
-        resetEdgeBounce(false);
+        const secondPush=edgeBounce.armed&&edgeBounce.events>=2&&edgeBounce.pull>=EDGE_BOUNCE_TRIGGER;
+        const hardPush=edgeBounce.events>=EDGE_HARD_EVENTS&&edgeBounce.pull>=EDGE_HARD_PULL;
+        if(target===null||(!secondPush&&!hardPush))return;
+        disarmEdgeBounce();resetEdgeBounce(false);
         state.chapterNavLock=true;
         goto(target,0,true,direction>0?'top':'bottom').catch(err=>toast(err.message)).finally(()=>setTimeout(()=>state.chapterNavLock=false,400));
     },{passive:true});
@@ -643,6 +650,7 @@ on('toggle-semantic-rail','click',()=>setSemanticVisible(document.body.classList
 document.querySelectorAll('[data-note-layer]').forEach(b => b.onclick = () => openNoteLayer(b.dataset.noteLayer).catch(e => toast(e.message)));
 on('edit-note','click',()=>{state.editing=true;renderNote();$('note-editor').focus();});
 on('note-editor','input',()=>{state.dirty=true;$('note-save-state').textContent='未保存';});on('save-note','click',saveNote);
+on('cancel-note','click',()=>{if(!state.note||!state.editing)return;if(state.dirty&&!confirm('放弃未保存的修改？'))return;$('note-editor').value=state.note.content||'';state.dirty=false;state.editing=false;$('note-save-state').textContent='';renderNote();});
 on('export-note','click',()=>download($('note-editor').value,(state.note?.key||'笔记')+'.md'));
 on('generate-note','click',async()=>{if(!state.note)return;if(state.dirty){toast('请先保存当前笔记，再生成 AI 候选稿');return;}const n=state.note;if(n.layer==='L3')await generate({layer:'L3',paragraph_ref:n.target,mode:'overwrite',spec_type:$('agent-spec').value});else await generate({layer:n.layer,target:n.target,spec_type:$('agent-spec').value});});
 on('note-list-toggle','click',async()=>{const box=$('note-list');box.hidden=!box.hidden;if(box.hidden)return;const [saved,legacy]=await Promise.all([api(base+'/notes'),api('/api/layer/concept_list/'+book)]);box.replaceChildren();saved.items.forEach(n=>box.append(button(n.layer+' · '+(n.target.term||n.content.slice(0,45)||n.key),()=>openNote(n.layer,n.target))));legacy.items.forEach(n=>{const d=el('details');d.append(el('summary','','原有概念 · '+n.term),mdBox(n.content));box.append(d);});if(!box.children.length)box.append(el('p','muted','尚无笔记'));});

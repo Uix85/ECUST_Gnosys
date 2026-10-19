@@ -128,6 +128,33 @@ def validate_target(book_id, layer, target):
         raise HTTPException(422, '笔记目标不完整') from exc
 
 
+def _first_text_line(content):
+    for line in (content or '').splitlines():
+        line = line.strip()
+        if line and not line.startswith('#'):
+            return line
+    return ''
+
+
+def _compose_l3_content(short, detail, sentences):
+    """旧语义层 L3 的三段内容合成为一份可编辑 Markdown。"""
+    short = (short or '').strip()
+    detail = (detail or '').strip()
+    sections = []
+    if short:
+        sections.append('## 简短解释\n\n' + short)
+    if detail and detail != short:
+        sections.append('## 详细解释\n\n' + detail)
+    items = []
+    for sentence in sentences or []:
+        text = sentence.get('text', '') if isinstance(sentence, dict) else str(sentence)
+        if text.strip():
+            items.append(f'{len(items) + 1}. {text.strip()}')
+    if items:
+        sections.append('## 逐句解释\n\n' + '\n'.join(items))
+    return '\n\n'.join(sections)
+
+
 def get_note(book_id, layer, target):
     key = validate_target(book_id, layer, target)
     db = book_db(book_id)
@@ -149,7 +176,7 @@ def get_note(book_id, layer, target):
     if layer == 'L3':
         old = next((n for n in list_paragraph_notes(book_id, target['chapter_idx']) if n['paragraph_index'] == target['paragraph_index']), None)
         if old:
-            content = old['detail'] or old['short']
+            content = _compose_l3_content(old.get('short'), old.get('detail'), old.get('sentences'))
             legacy_version = fingerprint(dumps(old))
     if layer == 'L4':
         old = db.execute('SELECT content FROM concept_layer WHERE term=?', (target['term'],)).fetchone()
@@ -204,7 +231,7 @@ async def get_chapter(book_id: str, chapter_idx: int):
         p['note'] = notes.get(p['paragraph_index'])
         manual = book_db(book_id).execute('SELECT content,model FROM workspace_notes WHERE key=?', (f"L3:{chapter_idx}:{p['paragraph_index']}",)).fetchone()
         if manual and manual['model'] == 'manual':
-            p['note'] = {'short': manual['content'].split('\n', 1)[0], 'detail': manual['content'], 'sentences': []}
+            p['note'] = {'short': _first_text_line(manual['content']), 'detail': manual['content'], 'sentences': []}
     images = []
     soup = clean_html_content(BeautifulSoup(original_html, 'html.parser'))
     for img in soup.find_all('img'):
