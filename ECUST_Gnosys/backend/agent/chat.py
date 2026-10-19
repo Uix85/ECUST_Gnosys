@@ -97,7 +97,12 @@ def message_item(book_id, row):
 
 @router.get('/sessions')
 async def list_sessions(book_id: str):
-    return {'items': [dict(r) for r in book_db(book_id).execute('SELECT * FROM chat_sessions ORDER BY updated_at DESC')]}
+    # 空草稿不应出现在会话列表里；前端也会把新会话延迟到第一次发送才写库。
+    rows = book_db(book_id).execute(
+        "SELECT s.* FROM chat_sessions s WHERE EXISTS "
+        "(SELECT 1 FROM chat_messages m WHERE m.session_id=s.id) "
+        "ORDER BY s.updated_at DESC")
+    return {'items': [dict(r) for r in rows]}
 
 
 @router.post('/sessions')

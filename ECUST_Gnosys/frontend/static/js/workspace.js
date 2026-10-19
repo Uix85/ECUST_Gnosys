@@ -6,7 +6,7 @@ const $ = id => document.getElementById(id);
 const state = {chapter: cfg.chapter, nodes: [], paragraphs: [], references: [], session: '', sessions: [], messages: [], activeMessage: '',
     note: null, dirty: false, editing: false, selected: [], nav: 'outline', panel: 'chat', generation: 0,
     tocPinned: new Set(), tocClosed: new Set(), tocActive: new Set(), chapterNavLock: false};
-let chatStream, toastTimer, progressTimer, tocTimer, runStream, mention = null, noteRequest = 0, menuSessionId = '';
+let chatStream, toastTimer, progressTimer, tocTimer, runStream, mention = null, noteRequest = 0, menuSessionId = '', chatSending = false;
 const EDGE_BOUNCE_LIMIT = 34, EDGE_BOUNCE_TRIGGER = 180, EDGE_BOUNCE_MAX_PULL = 1200;
 const EDGE_HARD_PULL = 720, EDGE_HARD_EVENTS = 5, EDGE_ARM_WINDOW = 1400;
 const edgeBounce = {direction:0, pull:0, events:0, armed:false, idleTimer:null, cleanupTimer:null, armTimer:null};
@@ -415,12 +415,14 @@ async function openSession(id) {
     $('messages').replaceChildren(el('p', 'muted', '正在载入对话…'));
     await loadSession();
 }
-async function newSession() {
-    const r = await api(chatBase + '/sessions', {});
-    await sessions();
-    await openSession(r.id);
-    $('chat-input').focus();
-    return r.id;
+function newSession() {
+    // 只开前端草稿；第一次发送成功后才创建数据库会话，避免留下空对话。
+    if (chatStream) chatStream.close();
+    state.session=''; state.messages=[]; state.activeMessage='';
+    panel('chat'); showThreadView();
+    $('chat-session-title').textContent='新对话';
+    $('chat-session-meta').textContent='尚未保存';
+    $('chat-status').textContent=''; setChatActive(false); renderMessages(); $('chat-input').focus();
 }
 async function loadSession() {
     if (chatStream) chatStream.close(); state.activeMessage='';
@@ -503,12 +505,32 @@ function streamAnswer(id, cursor=0) {
     chatStream.onerror=()=>{$('chat-status').textContent='连接中断，正在重接；回答会继续保存在本机';};
 }
 async function send() {
+    if(chatSending)return;
     const content=$('chat-input').value;if(!content.trim()&&!state.references.length)return;
-    if(!state.session)await newSession();
-    const requestId=$('chat-input').dataset.requestId||crypto.randomUUID();$('chat-input').dataset.requestId=requestId;
-    const receipt=await api(chatBase+'/sessions/'+state.session+'/messages',{content,references:state.references,request_id:requestId});
-    $('chat-input').value='';delete $('chat-input').dataset.requestId;state.references=[];renderChips();closeMentions();await loadSession();
-
+    chatSending=true;
+    let createdHere=!state.session;
+    try {
+        if(createdHere){
+            const created=await api(chatBase+'/sessions',{});
+            state.session=created.id;
+            $('chat-session-title').textContent=created.title||'新对话';
+            $('chat-session-meta').textContent='刚刚';
+        }
+        const requestId=$('chat-input').dataset.requestId||crypto.randomUUID();$('chat-input').dataset.requestId=requestId;
+        try {
+            await api(chatBase+'/sessions/'+state.session+'/messages',{content,references:state.references,request_id:requestId});
+        } catch(error) {
+            if(createdHere&&error.status){
+                const sid=state.session;
+                state.session='';state.messages=[];state.activeMessage='';
+                try{await api(chatBase+'/sessions/'+sid,undefined,'DELETE');}catch(_){}
+                await sessions().catch(()=>{});
+                $('chat-session-title').textContent='新对话';$('chat-session-meta').textContent='尚未保存';renderMessages();setChatActive(false);
+            }
+            throw error;
+        }
+        $('chat-input').value='';delete $('chat-input').dataset.requestId;state.references=[];renderChips();closeMentions();await loadSession();await sessions();
+    } finally { chatSending=false; }
 }
 function captureSelection() {
     const selection=window.getSelection();if(!selection.rangeCount||selection.isCollapsed){$('selection-actions').hidden=true;return;}
@@ -743,7 +765,7 @@ $('selection-actions').addEventListener('mousedown',e=>e.preventDefault());
 on('selection-chat','click',async()=>{
     const refs=state.selected.slice();$('selection-actions').hidden=true;
     if(!refs.length)return;
-    if(state.session&&!$('chat-thread-view').hidden){panel('chat');showThreadView();addReferences(refs);return;}
+    if(!$('chat-thread-view').hidden){panel('chat');showThreadView();addReferences(refs);return;}
     // 列表页/无会话时另起新对话，避免把上一个会话未发送的引用带进来。
     state.references=[];renderChips();
     await newSession();
