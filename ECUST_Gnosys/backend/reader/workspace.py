@@ -1,6 +1,7 @@
 """Canonical reading positions and user-owned notes shared by UI and agents."""
 
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from urllib.parse import quote
@@ -9,7 +10,7 @@ from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import Response
 from bs4 import BeautifulSoup
 
-from agent.book import book_db, fingerprint, get_paragraph, logical_paragraphs, normalize_text, list_paragraph_notes
+from agent.book import book_db, fingerprint, get_paragraph, logical_paragraphs, normalize_text, list_paragraph_notes, text_hash
 from reader.book_service import load_book_cached, _get_toc_pages, _build_chapters
 from reader.import_epub import clean_html_content
 
@@ -136,6 +137,16 @@ def _first_text_line(content):
     return ''
 
 
+def _l3_short_from_content(content):
+    """手工 L3 笔记的段旁简短解释取自“简短解释”小节。"""
+    match = re.search(r'^##\s*简短解释\s*$(.*?)(?=^##\s|\Z)', content or '', re.MULTILINE | re.DOTALL)
+    if match:
+        text = match.group(1).strip()
+        if text:
+            return text
+    return _first_text_line(content)
+
+
 def _compose_l3_content(short, detail, sentences):
     """旧语义层 L3 的三段内容合成为一份可编辑 Markdown。"""
     short = (short or '').strip()
@@ -231,7 +242,7 @@ async def get_chapter(book_id: str, chapter_idx: int):
         p['note'] = notes.get(p['paragraph_index'])
         manual = book_db(book_id).execute('SELECT content,model FROM workspace_notes WHERE key=?', (f"L3:{chapter_idx}:{p['paragraph_index']}",)).fetchone()
         if manual and manual['model'] == 'manual':
-            p['note'] = {'short': _first_text_line(manual['content']), 'detail': manual['content'], 'sentences': []}
+            p['note'] = {'short': _l3_short_from_content(manual['content']), 'detail': manual['content'], 'sentences': []}
     images = []
     soup = clean_html_content(BeautifulSoup(original_html, 'html.parser'))
     for img in soup.find_all('img'):
@@ -300,7 +311,7 @@ async def delete_bookmark(book_id: str, bookmark_id: str):
 
 
 @router.get('/notes')
-async def list_notes(book_id: str):
+async def list_notes(book_id: str, summary: bool = Query(False)):
     db = book_db(book_id)
     items = [dict(row, target=json.loads(row['target_json'])) for row in db.execute('SELECT * FROM workspace_notes ORDER BY updated_at DESC')]
     keys = {n['key'] for n in items}
@@ -313,19 +324,55 @@ async def list_notes(book_id: str):
     chapter_list = chapters(book_id)
     for layer, target in [('L1', {})] + [('L2', {'chapter_idx': ci}) for ci in range(len(chapter_list))]:
         push(get_note(book_id, layer, target))
-    # L3 直接从已读出的段落笔记拼条目：逐条 get_note 会把每章的段落笔记重扫一遍（1425 条 × 每章 0.4s）
+
+    # 批量读取段落索引与两类笔记，避免对 1400+ 段落逐条查询（原来约 6 秒）。
+    paragraphs_by_chapter = []
     for ci in range(len(chapter_list)):
-        for p in list_paragraph_notes(book_id, ci):
-            target = {'chapter_idx': ci, 'paragraph_index': p['paragraph_index'],
-                      'fingerprint': p['fingerprint']}
+        _, paragraphs, _ = logical_paragraphs(book_id, ci)
+        paragraphs_by_chapter.append((ci, paragraphs))
+    agent_notes = {}
+    for row in db.execute("SELECT * FROM agent_notes WHERE state IN ('published','accepted') ORDER BY updated_at DESC"):
+        agent_notes.setdefault((row['chapter_idx'], row['paragraph_index'], row['fingerprint']), row)
+    semantic_notes = {}
+    for row in db.execute("SELECT text_hash, content, detail, sentences, source_text FROM semantic_layer WHERE kind='para'"):
+        semantic_notes.setdefault(row['text_hash'], row)
+
+    for ci, paragraphs in paragraphs_by_chapter:
+        for para in paragraphs:
+            target = {'chapter_idx': ci, 'paragraph_index': para['paragraph_index'],
+                      'fingerprint': para['fingerprint']}
             key = note_key('L3', target)
             if key in keys:
                 continue
+            agent = agent_notes.get((ci, para['paragraph_index'], para['fingerprint']))
+            if agent:
+                try:
+                    sentences = json.loads(agent['sentences'] or '[]')
+                except (TypeError, ValueError):
+                    sentences = []
+                note = {'chapter_idx': ci, **para, 'short': agent['short'], 'detail': agent['detail'],
+                        'sentences': sentences, 'source_text': agent['source_text'], 'origin': 'agent'}
+            else:
+                legacy = semantic_notes.get(text_hash(para['text']))
+                if not legacy:
+                    continue
+                try:
+                    sentences = json.loads(legacy['sentences'] or '[]')
+                except (TypeError, ValueError):
+                    sentences = []
+                note = {'chapter_idx': ci, **para, 'short': legacy['content'] or '',
+                        'detail': legacy['detail'] or '', 'sentences': sentences,
+                        'source_text': legacy['source_text'] or para['text'], 'origin': 'legacy'}
             keys.add(key)
             items.append({'key': key, 'layer': 'L3', 'target': target,
-                          'content': p['detail'] or p['short'], 'revision': 0,
-                          'legacy_version': fingerprint(dumps(p)), 'updated_at': '',
+                          'content': note['detail'] or note['short'], 'revision': 0,
+                          'legacy_version': fingerprint(dumps(note)), 'updated_at': '',
                           'model': 'legacy'})
+    if summary:
+        for item in items:
+            content = item.get('content')
+            if isinstance(content, str) and len(content) > 120:
+                item['content'] = content[:120]
     return {'items': items}
 
 
