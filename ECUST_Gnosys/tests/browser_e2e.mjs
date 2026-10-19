@@ -48,8 +48,17 @@ await page.fill('#library-search','社会');
 await page.evaluate(()=>localStorage.setItem('gnosys-inspector-width','380'));
 await page.click('text=继续阅读'); await ready();
 pass('书库搜索与继续阅读',await page.url());
-await page.click('#new-session'); await page.waitForFunction(()=>document.querySelectorAll('.message.assistant').length===0);
-await page.evaluate(()=>window.prompt=()=> '浏览器验收对话');await page.click('#rename-session');await page.waitForFunction(()=>document.querySelector('#sessions').selectedOptions[0]?.textContent==='浏览器验收对话');
+await page.fill('#session-new-input','开始验收');
+await page.click('#session-new-send');
+await page.waitForFunction(()=>!document.querySelector('#chat-thread-view').hidden&&document.querySelectorAll('.message.assistant').length===1&&!document.querySelector('#send-chat').disabled,undefined,{timeout:15000});
+await page.click('#back-to-sessions');
+await page.waitForFunction(()=>document.querySelectorAll('.session-item').length===1);
+await page.evaluate(()=>window.prompt=()=> '浏览器验收对话');
+await page.evaluate(()=>document.querySelector('.session-item').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:80,clientY:200})));
+await page.click('#rename-session');
+await page.waitForFunction(()=>document.querySelector('.session-item-title')?.textContent==='浏览器验收对话');
+await page.click('.session-item');
+await page.waitForFunction(()=>!document.querySelector('#chat-thread-view').hidden&&document.querySelectorAll('.message.assistant').length===1);
 
 await page.fill('#chat-input','@实践');
 assert.ok(await page.evaluate(()=>document.querySelectorAll('#mention-list [role=option]').length>=2));
@@ -83,14 +92,14 @@ assert.ok(await page.evaluate(()=>document.querySelector('#note-editor').value.i
 pass('Agent 回答复制并保存为对话摘记',true);
 await page.click('[data-panel=chat]');
 await page.fill('#chat-input','继续说明');await page.press('#chat-input','Enter');
-await page.waitForFunction(()=>document.querySelectorAll('.message.assistant').length===2&&!document.querySelector('#send-chat').disabled,undefined,{timeout:15000});
-await page.reload();await ready();await page.waitForFunction(()=>document.querySelectorAll('.message.assistant').length===2);
-pass('追问与刷新后的会话历史',2);
+await page.waitForFunction(()=>document.querySelectorAll('.message.assistant').length===3&&!document.querySelector('#send-chat').disabled,undefined,{timeout:15000});
+await page.reload();await ready();await page.waitForFunction(()=>document.querySelectorAll('.message.assistant').length===3);
+pass('追问与刷新后的会话历史',3);
 await page.fill('#chat-input','测试停止后刷新续接');await page.click('#send-chat');
 await page.waitForFunction(()=>[...document.querySelectorAll('.message.assistant')].some(m=>{const status=m.querySelector('.message-role')?.textContent||'';return !status.includes('completed')&&!status.includes('failed')&&m.querySelector('.message-content')?.textContent.length>0}),undefined,{timeout:10000});
-await page.reload();await ready();await page.waitForFunction(()=>{const rows=[...document.querySelectorAll('.message.assistant')];return rows.length===3&&rows.at(-1)?.querySelector('.message-role')?.textContent.includes('completed')},undefined,{timeout:15000});
+await page.reload();await ready();await page.waitForFunction(()=>{const rows=[...document.querySelectorAll('.message.assistant')];return rows.length===4&&rows.at(-1)?.querySelector('.message-role')?.textContent.includes('completed')},undefined,{timeout:15000});
 const resumed=await page.evaluate(()=>{const rows=[...document.querySelectorAll('.message.assistant')];return {count:rows.length,analysis:(rows.at(-1)?.textContent.match(/阅读分析/g)||[]).length,formula:rows.at(-1)?.textContent.includes('公式')}});
-assert.equal(resumed.count,3);assert.equal(resumed.analysis,1);assert.equal(resumed.formula,true);pass('流式中刷新后续接且内容不重复',resumed);
+assert.equal(resumed.count,4);assert.equal(resumed.analysis,1);assert.equal(resumed.formula,true);pass('流式中刷新后续接且内容不重复',resumed);
 
 const security=await page.evaluate(()=>{const box=document.createElement('div');box.innerHTML=renderMarkdown('<img src=x onerror="window.__xss=1">\n\n[x](javascript:alert(1))\n\n<svg onload=alert(1)></svg>\n\n~~删除~~\n\n> 引用\n\n$$x^2$$\n\n```js\nconst x = 1\n');return {unsafe:!!box.querySelector('script,iframe,svg,[onerror],[onload],a[href^="javascript:"]'),strike:!!box.querySelector('s'),quote:!!box.querySelector('blockquote'),math:!!box.querySelector('.katex'),unfinishedCode:!!box.querySelector('pre code')};});
 assert.equal(security.unsafe,false);assert.ok(security.strike&&security.quote&&security.math&&security.unfinishedCode);pass('危险 HTML/链接与未闭合代码块',security);
@@ -173,12 +182,27 @@ await page.waitForFunction(()=>document.querySelector('.message.assistant:last-c
 pass('停止的对话可从页面重试',true);
 const exportPromise=page.waitForEvent('download');await page.click('#export-chat');const chatFile=await exportPromise;await chatFile.saveAs('/tmp/gnosys-e2e-chat.md');assert.ok((await fs.readFile('/tmp/gnosys-e2e-chat.md','utf8')).includes('比较这几处原文'));
 pass('对话 Markdown 导出','/tmp/gnosys-e2e-chat.md');
-await page.evaluate(()=>window.confirm=()=>true);await page.click('#delete-session');await page.waitForFunction(()=>document.querySelector('#sessions').value==='');pass('会话重命名与删除',true);
+await page.click('#back-to-sessions');await visible('.session-item');
+await page.evaluate(()=>window.confirm=()=>true);
+await page.evaluate(()=>document.querySelector('.session-item').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:80,clientY:200})));
+await page.click('#delete-session');
+await page.waitForFunction(()=>document.querySelectorAll('.session-item').length===0);
+pass('会话重命名与删除',true);
 
 await page.click('[data-nav=search]');await page.fill('#search-input','社会关系');await page.press('#search-input','Enter');await visible('.search-result');
 assert.ok(await page.evaluate(()=>document.querySelectorAll('.search-result').length>=2));
 await page.click('.search-result button >> nth=0');await page.click('#add-bookmark');await page.click('[data-nav=bookmarks]');await visible('.bookmark-row');
 pass('全文搜索、原文定位与书签',true);
+const counter=await page.evaluate(()=>document.querySelector('#chapter-counter').textContent);
+if(!counter.startsWith('1 /')){await page.click('#previous');await page.waitForFunction(()=>document.querySelector('#chapter-counter').textContent.startsWith('1 /'));}
+await page.click('[data-nav=search]');await page.fill('#search-input','重复行动');await page.press('#search-input','Enter');await visible('.search-result');
+await page.evaluate(()=>{window.__searchScrolls=[];const original=HTMLElement.prototype.scrollTo;HTMLElement.prototype.scrollTo=function(...args){window.__searchScrolls.push(args[0]);return original.apply(this,args);};});
+await page.click('.search-result .search-hit >> nth=0');
+await page.waitForFunction(()=>location.hash.startsWith('#source=1:'));
+const crossChapter=await page.evaluate(()=>({hash:location.hash,counter:document.querySelector('#chapter-counter').textContent,scrolls:window.__searchScrolls}));
+assert.ok(crossChapter.counter.startsWith('2 /'),JSON.stringify(crossChapter));
+assert.ok(crossChapter.scrolls.some(item=>item.behavior==='auto'),JSON.stringify(crossChapter));
+pass('搜索跨章跳转并立即定位',crossChapter);
 for(let i=0;i<5;i++){if((await page.evaluate(()=>localStorage.getItem('gnosys-font-size')))==='22')break;await page.click('#font-size-cycle');}
 for(let i=0;i<3;i++){if((await page.evaluate(()=>localStorage.getItem('gnosys-line-height')))==='2.2')break;await page.click('#line-height-cycle');}
 await page.reload();await ready();
@@ -207,8 +231,8 @@ await viewport(390,844);await page.reload();await ready();
 let mobile=await page.evaluate(()=>({viewport:innerWidth,scroll:document.documentElement.scrollWidth,navHidden:document.body.classList.contains('no-navigation'),panelHidden:document.body.classList.contains('no-inspector')}));
 assert.equal(mobile.scroll,mobile.viewport);assert.ok(mobile.navHidden&&mobile.panelHidden);
 await page.click('#toggle-nav');await page.click('#toggle-panel');
-mobile=await page.evaluate(()=>({viewport:innerWidth,scroll:document.documentElement.scrollWidth,navOpen:document.querySelector('#toggle-nav').getAttribute('aria-expanded'),panelOpen:document.querySelector('#toggle-panel').getAttribute('aria-expanded'),panelRight:document.querySelector('#inspector').getBoundingClientRect().right}));
-assert.equal(mobile.scroll,mobile.viewport);assert.equal(mobile.navOpen,'true');assert.equal(mobile.panelOpen,'true');assert.ok(mobile.panelRight<=mobile.viewport);
+mobile=await page.evaluate(()=>({viewport:innerWidth,scroll:document.documentElement.scrollWidth,navOpen:document.querySelector('#toggle-nav').getAttribute('aria-expanded'),panelOpen:document.querySelector('#toggle-panel').getAttribute('aria-expanded'),panelRight:document.querySelector('#inspector').getBoundingClientRect().right,navLeft:document.querySelector('#navigation').getBoundingClientRect().left,panelLeft:document.querySelector('#inspector').getBoundingClientRect().left,rail:document.getElementById('function-board').getBoundingClientRect().width}));
+assert.equal(mobile.scroll,mobile.viewport);assert.equal(mobile.navOpen,'true');assert.equal(mobile.panelOpen,'true');assert.ok(mobile.panelRight<=mobile.viewport);assert.ok(mobile.navLeft>=mobile.rail,JSON.stringify(mobile));assert.ok(mobile.panelLeft>=mobile.rail,JSON.stringify(mobile));
 await page.screenshot({path:'/tmp/gnosys-e2e-mobile.png',fullPage:true,raw:true});pass('390px 手机视口及抽屉开合',mobile);
 
 await page.goto(origin+'/');
@@ -222,6 +246,9 @@ await page.click('.delete-book[data-book="'+imported.id+'"]');
 await page.waitForFunction(()=>![...document.querySelectorAll('.book-card h2')].some(n=>n.textContent==='端到端导入样书'));
 const missing=await page.fetch('/api/v1/books/'+encodeURIComponent(imported.id));assert.equal(missing.status,404);
 pass('书库导入、打开、删除与只读当前临时书籍',imported);
+await page.goto(origin+'/settings?from=/%5Cevil.com');
+assert.equal(await page.evaluate(()=>document.getElementById('settings-back').getAttribute('href')),'/');
+pass('设置返回地址不跳出本站',true);
 const errors=await page.evaluate(()=>window.__qaErrors||[]);assert.deepEqual(errors,[]);pass('浏览器未捕获异常',errors);
 await fs.writeFile(report,JSON.stringify({origin,spaceId:task.spaceId,passed:results.length,results},null,2));console.log('REPORT '+report);
 if(!testConfig.spaceId)await task.finish({keep:[]});

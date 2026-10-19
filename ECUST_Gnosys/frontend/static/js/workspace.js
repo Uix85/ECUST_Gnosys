@@ -6,7 +6,8 @@ const $ = id => document.getElementById(id);
 const state = {chapter: cfg.chapter, nodes: [], paragraphs: [], references: [], session: '', sessions: [], messages: [], activeMessage: '',
     note: null, dirty: false, editing: false, selected: [], nav: 'outline', panel: 'chat', generation: 0,
     tocPinned: new Set(), tocClosed: new Set(), tocActive: new Set(), chapterNavLock: false};
-let chatStream, toastTimer, progressTimer, tocTimer, runStream, mention = null, noteRequest = 0, menuSessionId = '', chatSending = false;
+let chatStream, toastTimer, progressTimer, tocTimer, runStream, mention = null, noteRequest = 0, menuSessionId = '', chatSending = false, noteSaving = false;
+const chatDrafts = new Map();
 const EDGE_BOUNCE_LIMIT = 34, EDGE_BOUNCE_TRIGGER = 180, EDGE_BOUNCE_MAX_PULL = 1200;
 const EDGE_HARD_PULL = 720, EDGE_HARD_EVENTS = 5, EDGE_ARM_WINDOW = 1400;
 const edgeBounce = {direction:0, pull:0, events:0, armed:false, idleTimer:null, cleanupTimer:null, armTimer:null};
@@ -164,14 +165,30 @@ function applyEdgePull(direction, magnitude) {
     clearTimeout(edgeBounce.idleTimer);
     edgeBounce.idleTimer = setTimeout(armEdgeBounce, 260);
 }
-async function goto(ci, pi = 0, updateHistory = true, edge = 'top') {
-    if (ci < 0 || ci >= cfg.total) return;
+async function goto(ci, pi = 0, updateHistory = true, edge = 'top', smooth = true, force = false) {
+    ci = Number(ci); pi = Number(pi);
+    if (!Number.isInteger(ci) || !Number.isInteger(pi) || ci < 0 || pi < 0) return;
     resetEdgeBounce(false); disarmEdgeBounce();
+    state.selected = []; $('selection-actions').hidden = true;
     const chapterChanged = ci !== state.chapter;
+    if (!chapterChanged && !force && state.paragraphs.some(p => p.paragraph_index === pi)) {
+        state.generation++;
+        $('chapter-content').setAttribute('aria-busy', 'false');
+        updateTocActive(pi); locate(pi, smooth);
+        if (updateHistory && !cfg.noteMode) history.replaceState({}, '', '/read/' + book + '/' + ci + '#source=' + ci + ':' + pi);
+        return;
+    }
     const version = ++state.generation;
     $('chapter-content').setAttribute('aria-busy', 'true');
-    const data = await api(base + '/chapter/' + ci);
+    let data;
+    try {
+        data = await api(base + '/chapter/' + ci);
+    } catch (error) {
+        if (version === state.generation) $('chapter-content').setAttribute('aria-busy', 'false');
+        throw error;
+    }
     if (version !== state.generation) return;
+    cfg.total = data.total;
     state.chapter = ci; state.paragraphs = data.paragraphs;
     $('chapter-title').textContent = data.title; $('chapter-counter').textContent = (ci + 1) + ' / ' + data.total + ' 章';
     $('previous').disabled = ci === 0; $('next').disabled = ci + 1 === data.total;
@@ -197,16 +214,19 @@ async function goto(ci, pi = 0, updateHistory = true, edge = 'top') {
     else $('reader-scroll').scrollTop = 0;
     const landingPi = landingAtBottom ? (currentPosition()?.paragraph_index ?? 0) : pi;
     updateTocActive(landingPi);
-    if (pi > 0 && state.paragraphs[pi]) locate(pi);
+    if (pi > 0 && state.paragraphs.some(p => p.paragraph_index === pi)) locate(pi, smooth);
     if (updateHistory && !cfg.noteMode) history.replaceState({}, '', '/read/' + book + '/' + ci + '#source=' + ci + ':' + landingPi);
     clearTimeout(progressTimer); const ref = currentPosition(); if (ref) api(base + '/state', ref, 'PUT').catch(e => toast(e.message));
 }
-function locate(pi) {
+function locate(pi, smooth = true) {
     const target = $('paragraph-' + pi), scroller = $('reader-scroll');
     if (!target) return;
     const top = scroller.scrollTop + target.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-    scroller.scrollTo({top, behavior: 'smooth'});
+    scroller.scrollTo({top, behavior: smooth ? 'smooth' : 'auto'});
     document.querySelectorAll('.located').forEach(n => n.classList.remove('located')); target.classList.add('located'); setTimeout(() => target.classList.remove('located'), 2600);
+}
+function refreshChapter() {
+    return goto(state.chapter, currentPosition()?.paragraph_index || 0, false, 'top', true, true);
 }
 async function jumpReference(ref) { const r = await api(base + '/reference/check', {references:[ref]}); const valid = r.items[0]; await goto(valid.chapter_idx, valid.paragraph_index); }
 async function openNote(layer, target = {}) {
@@ -270,13 +290,16 @@ function renderNote() {
     preview.innerHTML = renderMarkdown(state.note?.layer === 'L3' ? splitL3Note(content).body : content);
 }
 async function saveNote() {
-    if (!state.note) return;
+    if (!state.note || noteSaving) return;
+    noteSaving = true; $('save-note').disabled = true;
     try {
         const data = await api(base + '/note', {layer:state.note.layer, target:state.note.target, content:$('note-editor').value, baseline:baseline(state.note)}, 'PUT');
         state.note = data; state.dirty = false; state.editing = false; $('note-save-state').textContent = '已保存'; applyL3Short(data.content); delete $('note-list').dataset.loaded; toast('笔记已保存'); renderNote();
     } catch (e) {
         if (e.status === 409) { $('note-save-state').textContent = '保存冲突 · 输入已保留'; download($('note-editor').value, '冲突笔记备份.md'); }
         throw e;
+    } finally {
+        noteSaving = false; $('save-note').disabled = false;
     }
 }
 async function generate(body) {
@@ -292,7 +315,7 @@ function watchRun(id) {
     if (runStream) runStream.close();
     runStream = new EventSource(agentBase + '/' + id + '/events');
     runStream.addEventListener('update', e => { const x = JSON.parse(e.data); const card = $('run-' + id); if (card) { let status = card.querySelector('.run-status'); if (status) status.textContent = x.message; } });
-    runStream.addEventListener('end', () => { runStream.close(); refreshRuns().catch(e => toast(e.message)); if (!state.dirty && state.note) openNote(state.note.layer, state.note.target).then(() => panel('runs')).catch(e => toast(e.message)); goto(state.chapter, currentPosition()?.paragraph_index || 0, false).catch(e => toast(e.message)); });
+    runStream.addEventListener('end', () => { runStream.close(); refreshRuns().catch(e => toast(e.message)); if (!state.dirty && state.note) openNote(state.note.layer, state.note.target).then(() => panel('runs')).catch(e => toast(e.message)); refreshChapter().catch(e => toast(e.message)); });
 }
 async function refreshRuns() {
     const [data, pending] = await Promise.all([api(agentBase), api(agentBase + '/pending')]); $('runs-list').replaceChildren(); $('pending-list').replaceChildren();
@@ -307,16 +330,26 @@ async function refreshRuns() {
     }
     for (const draft of pending.drafts || []) {
         const card = el('div','run-card'); card.append(el('header','',draft.layer + ' 待核稿 · ' + draft.state), mdBox(draft.result.content));
-        card.append(button('采纳', async () => { await api(agentBase + '/' + draft.run_id + '/adopt', {draft_id:draft.id}); refreshRuns(); toast('已采纳'); }), button('导出候选稿', () => download(draft.result.content,'候选稿.md'))); $('pending-list').append(card);
+        card.append(button('采纳', async () => { await api(agentBase + '/' + draft.run_id + '/adopt', {draft_id:draft.id}); await refreshRuns(); await refreshChapter(); toast('已采纳'); }), button('导出候选稿', () => download(draft.result.content,'候选稿.md'))); $('pending-list').append(card);
     }
     for (const draft of pending.items || []) {
         const card = el('div','run-card'); card.append(el('header','','语义层待核稿 · 第 ' + (draft.chapter_idx+1) + ' 章'), mdBox(draft.detail || draft.short));
-        card.append(button('原文', () => goto(draft.chapter_idx,draft.paragraph_index)), button('采纳', async () => { await api(agentBase + '/' + draft.run_id + '/adopt',{task_id:draft.task_id}); refreshRuns(); })); $('pending-list').append(card);
+        card.append(button('原文', () => goto(draft.chapter_idx,draft.paragraph_index)), button('采纳', async () => { await api(agentBase + '/' + draft.run_id + '/adopt',{task_id:draft.task_id}); await refreshRuns(); await refreshChapter(); })); $('pending-list').append(card);
     }
 }
 function renderChips() {
     delete $('chat-input').dataset.requestId;
     $('reference-chips').replaceChildren(); state.references.forEach((ref,index) => $('reference-chips').append(refChip(ref, () => { state.references.splice(index,1); renderChips(); })));
+}
+function stashDraft() {
+    chatDrafts.set(state.session || '', {text:$('chat-input').value, references:state.references.slice(), requestId:$('chat-input').dataset.requestId || ''});
+}
+function restoreDraft(id) {
+    const draft = chatDrafts.get(id || '');
+    $('chat-input').value = draft?.text || '';
+    state.references = (draft?.references || []).slice();
+    renderChips(); closeMentions();
+    if (draft?.requestId) $('chat-input').dataset.requestId = draft.requestId;
 }
 function refChip(ref, remove) {
     const n = el('span','reference-chip' + (ref.valid === false ? ' invalid' : ''));
@@ -407,7 +440,9 @@ async function sessions() {
     renderSessionList();
 }
 async function openSession(id) {
+    stashDraft();
     state.session = id;
+    restoreDraft(id);
     panel('chat'); showThreadView();
     const current = state.sessions.find(session => session.id === id);
     $('chat-session-title').textContent = current?.title || '对话';
@@ -417,15 +452,16 @@ async function openSession(id) {
 }
 function newSession() {
     // 只开前端草稿；第一次发送成功后才创建数据库会话，避免留下空对话。
+    stashDraft();
     if (chatStream) chatStream.close();
-    state.session=''; state.messages=[]; state.activeMessage=''; state.references=[]; renderChips();
+    state.session=''; state.messages=[]; state.activeMessage=''; restoreDraft('');
     panel('chat'); showThreadView();
     $('chat-session-title').textContent='新对话';
     $('chat-session-meta').textContent='尚未保存';
     $('chat-status').textContent=''; setChatActive(false); renderMessages(); $('chat-input').focus();
 }
 async function loadSession() {
-    if (chatStream) chatStream.close(); state.activeMessage='';
+    if (chatStream) chatStream.close(); state.activeMessage=''; setChatActive(false);
     if (!state.session) { state.messages=[]; renderMessages(); return; }
     const sid=state.session, data=await api(chatBase + '/sessions/' + sid); if(sid!==state.session)return;
     $('chat-session-title').textContent = data.title || '对话';
@@ -511,27 +547,35 @@ async function send() {
     const content=$('chat-input').value;if(!content.trim()&&!state.references.length)return;
     chatSending=true;
     let createdHere=!state.session;
+    let sid=state.session;
     try {
         if(createdHere){
             const created=await api(chatBase+'/sessions',{});
-            state.session=created.id;
+            sid=created.id; state.session=sid;
             $('chat-session-title').textContent=created.title||'新对话';
             $('chat-session-meta').textContent='刚刚';
         }
         const requestId=$('chat-input').dataset.requestId||crypto.randomUUID();$('chat-input').dataset.requestId=requestId;
         try {
-            await api(chatBase+'/sessions/'+state.session+'/messages',{content,references:state.references,request_id:requestId});
+            await api(chatBase+'/sessions/'+sid+'/messages',{content,references:state.references,request_id:requestId});
         } catch(error) {
             if(createdHere&&error.status){
-                const sid=state.session;
-                state.session='';state.messages=[];state.activeMessage='';
                 try{await api(chatBase+'/sessions/'+sid,undefined,'DELETE');}catch(_){}
+                chatDrafts.delete(sid);
                 await sessions().catch(()=>{});
-                $('chat-session-title').textContent='新对话';$('chat-session-meta').textContent='尚未保存';renderMessages();setChatActive(false);
+                if(state.session===sid){
+                    state.session='';state.messages=[];state.activeMessage='';
+                    $('chat-session-title').textContent='新对话';$('chat-session-meta').textContent='尚未保存';renderMessages();setChatActive(false);
+                }
             }
             throw error;
         }
-        $('chat-input').value='';delete $('chat-input').dataset.requestId;state.references=[];renderChips();closeMentions();await loadSession();await sessions();
+        if(createdHere)chatDrafts.delete('');
+        chatDrafts.delete(sid);
+        if(state.session===sid){
+            $('chat-input').value='';delete $('chat-input').dataset.requestId;state.references=[];renderChips();closeMentions();await loadSession();
+        }
+        await sessions();
     } finally { chatSending=false; }
 }
 function captureSelection() {
@@ -560,14 +604,15 @@ function pageWidth() { return document.documentElement.clientWidth || window.inn
 function sidebarMinWidth() { return Math.max(1,Math.ceil(pageWidth()/50)); }
 function sidebarMaxWidth() {
     const page=pageWidth();
-    // 硬上限：页宽 1/3；同时给中间阅读区留出最小宽度，避免三栏挤爆。
-    return Math.max(0,Math.min(Math.floor(page/3),Math.floor((page-READING_MIN_WIDTH)/2)));
+    const rail=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--rail-width'))||0;
+    // 硬上限：页宽 1/3；同时给左侧功能区、中间阅读区留出最小宽度。
+    return Math.max(0,Math.min(Math.floor(page/3),Math.floor((page-rail-READING_MIN_WIDTH)/2)));
 }
 function applySidebarWidth(kind,width,persist) {
     const cfg=SIDEBARS[kind],panel=$(cfg.panel);if(!panel)return 0;
     const min=sidebarMinWidth(),max=sidebarMaxWidth();if(max<=min)return 0;
     const value=Math.max(min,Math.min(max,Math.round(width)));
-    document.documentElement.style.setProperty(cfg.css,value+'px');sidebarWidths[kind]=value;
+    if(pageWidth()>800){document.documentElement.style.setProperty(cfg.css,value+'px');sidebarWidths[kind]=value;}
     const handle=$(cfg.handle);
     if(handle){handle.setAttribute('aria-valuemin',String(min));handle.setAttribute('aria-valuemax',String(max));handle.setAttribute('aria-valuenow',String(value));}
     if(persist)localStorage.setItem(cfg.store,String(value));
@@ -682,7 +727,7 @@ async function jumpToAnchor(ci,anchor){
     const top=scroller.scrollTop+target.getBoundingClientRect().top-scroller.getBoundingClientRect().top;
     scroller.scrollTo({top,behavior:'smooth'});
 }
-document.querySelectorAll('[data-panel]').forEach(b=>b.onclick=()=>{const previous=state.panel;panel(b.dataset.panel);if(b.dataset.panel==='chat'&&previous!=='chat'){showSessionList();sessions().catch(e=>toast(e.message));}});document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>nav(b.dataset.nav).catch(e=>toast(e.message)));
+document.querySelectorAll('[data-panel]').forEach(b=>b.onclick=()=>{const previous=state.panel;panel(b.dataset.panel);if(b.dataset.panel==='chat'&&previous!=='chat'){showSessionList();sessions().catch(e=>toast(e.message));}if(b.dataset.panel==='note'&&!state.note)openNoteLayer('L1').catch(e=>toast(e.message));});document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>nav(b.dataset.nav).catch(e=>toast(e.message)));
 document.addEventListener('click',e=>{if(!e.target.closest('#session-menu'))closeSessionMenu();});
 document.addEventListener('contextmenu',e=>{if(!e.target.closest('.session-item')&&!e.target.closest('#session-menu'))closeSessionMenu();});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSessionMenu();});
@@ -690,7 +735,7 @@ window.addEventListener('resize',closeSessionMenu);$('session-list').addEventLis
 on('toggle-nav','click',()=>toggleSidebar('nav'));
 on('toggle-panel','click',()=>toggleSidebar('inspector'));
 on('previous','click',()=>goto(state.chapter-1));on('next','click',()=>goto(state.chapter+1));
-on('search-form','submit',async e=>{e.preventDefault();const q=$('search-input').value.trim();if(!q)return;const data=await api(base+'/search?q='+encodeURIComponent(q));$('nav-results').replaceChildren();data.items.forEach(item=>{const row=el('div','search-result');row.append(button(item.title,()=>goto(item.chapter_idx,item.paragraph_index)),el('small','',item.excerpt));$('nav-results').append(row);});if(!data.items.length)$('nav-results').append(el('p','muted','没有找到匹配文字'));if(data.truncated)$('nav-results').append(el('p','muted','结果较多，请缩小搜索范围'));});
+on('search-form','submit',async e=>{e.preventDefault();const q=$('search-input').value.trim();if(!q)return;const data=await api(base+'/search?q='+encodeURIComponent(q));const box=$('nav-results');box.replaceChildren();data.items.forEach(item=>{const row=el('div','search-result'),hit=button('',()=>goto(item.chapter_idx,item.paragraph_index,true,'top',false),'search-hit'),excerpt=el('span','search-excerpt'),start=Number.isInteger(item.match_start)?item.match_start:-1,end=start+(item.match_length||0);if(start>=0&&end>start){excerpt.append(document.createTextNode(item.excerpt.slice(0,start)),el('mark','',item.excerpt.slice(start,end)),document.createTextNode(item.excerpt.slice(end)));}else excerpt.textContent=item.excerpt;hit.append(excerpt);row.append(hit);box.append(row);});if(!data.items.length)box.append(el('p','muted','没有找到匹配文字'));if(data.truncated)box.append(el('p','muted','结果较多，请缩小搜索范围'));});
 on('add-bookmark','click',async()=>{const ref=currentPosition();if(ref){await api(base+'/bookmarks',{reference:ref,label:ref.quote.slice(0,50)});toast('已添加书签');}});
 on('reader-scroll','scroll',()=>{
     if(edgeBounce.direction||edgeBounce.armed){const s=$('reader-scroll');if(s.scrollTop>4&&s.scrollTop+s.clientHeight<s.scrollHeight-4){resetEdgeBounce(false);disarmEdgeBounce();}}
@@ -718,7 +763,7 @@ on('reader-scroll','scroll',()=>{
 }
 on('generate-semantic','click',()=>generate({layer:'L3',chapter_idx:state.chapter,mode:'fill_missing',spec_type:$('agent-spec').value}));
 on('toggle-semantic-rail','click',()=>setSemanticVisible(document.body.classList.contains('hide-semantic')));
-document.querySelectorAll('[data-note-layer]').forEach(b => b.onclick = () => openNoteLayer(b.dataset.noteLayer).catch(e => toast(e.message)));
+document.querySelectorAll('[data-note-layer]').forEach(b => b.onclick = () => { document.querySelectorAll('.tab-dropdown button').forEach(el => el.blur()); openNoteLayer(b.dataset.noteLayer).catch(e => toast(e.message)); });
 on('edit-note','click',()=>{state.editing=true;renderNote();$('note-editor').focus();});
 on('note-editor','input',()=>{state.dirty=true;$('note-save-state').textContent='未保存';});on('save-note','click',saveNote);
 on('cancel-note','click',()=>{if(!state.note||!state.editing)return;if(state.dirty&&!confirm('放弃未保存的修改？'))return;$('note-editor').value=state.note.content||'';state.dirty=false;state.editing=false;$('note-save-state').textContent='';renderNote();});
@@ -805,7 +850,8 @@ on('selection-concept','click',async()=>{
     $('selection-actions').hidden=true;await openNote('L4',target);
     try { await generate({layer:'L4',target,spec_type:$('agent-spec').value}); }
     catch(error) {
-        const decision=error.detail;
+        const envelope=error.detail;
+        const decision=envelope?.details&&!Array.isArray(envelope.details)?{...envelope.details,message:envelope.message}:envelope;
         if(decision?.action==='confirm'&&decision.candidates?.length){
             const term=prompt(decision.message+'\n'+decision.candidates.join(' / '),decision.candidates[0]);
             if(term){await openNote('L4',{...target,term});await generate({layer:'L4',target:{...target,term},spec_type:$('agent-spec').value});}
