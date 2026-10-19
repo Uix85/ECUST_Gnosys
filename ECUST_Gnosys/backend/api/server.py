@@ -10,6 +10,9 @@ import tempfile
 import urllib.parse
 
 from fastapi import FastAPI, Request, HTTPException, File, UploadFile, Body
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -29,11 +32,13 @@ from reader.book_service import (
     _get_anchor_chapter_map,
 )
 from reader.auxiliary_reading import router as layer_router
+from api.agent_bridge import router as agent_bridge_router
 from agent.api import agent_router, chat_router
 from agent.runs.records import allow_book_runs, recover_interrupted_runs
 from agent.runs.loop import cancel_book_runs
 from db.schema import close_db
 from starlette.middleware.gzip import GZipMiddleware
+from api.versioned import include_legacy_router, include_versioned_router
 
 app = FastAPI()
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # 应用根目录
@@ -55,12 +60,38 @@ def _asset_version():
 templates.env.globals["asset_version"] = _asset_version
 app.mount("/static", StaticFiles(directory=os.path.join(ROOT_DIR, "frontend", "static")), name="static")
 
-# 辅助阅读（四层级 AI 功能）独立挂载，与基础阅读路由隔离
-app.include_router(layer_router)
-app.include_router(agent_router)
+
+@app.exception_handler(HTTPException)
+async def api_http_error(request: Request, exc: HTTPException):
+    if request.url.path.startswith("/api/v1/"):
+        detail = exc.detail
+        if isinstance(detail, dict):
+            details = detail.get("details")
+            if details is None:
+                details = {key: value for key, value in detail.items()
+                           if key not in ("code", "message")}
+                details = details or None
+            error = {"code": detail.get("code", f"http_{exc.status_code}"),
+                     "message": detail.get("message", str(detail)), "details": details}
+        else:
+            error = {"code": f"http_{exc.status_code}", "message": str(detail), "details": None}
+        return JSONResponse(status_code=exc.status_code, content={"error": error}, headers=exc.headers)
+    return await http_exception_handler(request, exc)
+
+
+@app.exception_handler(RequestValidationError)
+async def api_validation_error(request: Request, exc: RequestValidationError):
+    if request.url.path.startswith("/api/v1/"):
+        return JSONResponse(status_code=422, content={"error": {
+            "code": "invalid_request", "message": "请求格式无效",
+            "details": jsonable_encoder(exc.errors())}})
+    return await request_validation_exception_handler(request, exc)
+
 from reader.workspace import router as workspace_router
-app.include_router(workspace_router)
-app.include_router(chat_router)
+for api_router in (layer_router, agent_router, workspace_router, chat_router):
+    include_versioned_router(app, api_router)
+    include_legacy_router(app, api_router)
+app.include_router(agent_bridge_router)
 
 
 @app.on_event("startup")
@@ -96,41 +127,25 @@ PINNED_BOOK_IDS = [
 ]
 
 # ── 书库首页 GET / ──
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def library_view(request: Request):
-    """【书库页面】列出所有已处理书籍的首页"""
-    books = []
-
-    if os.path.exists(BOOKS_DIR):
-        for item in os.listdir(BOOKS_DIR):
-            if item.endswith("_data") and os.path.isdir(os.path.join(BOOKS_DIR, item)):
-                book = load_book_cached(item)
-                if book:
-                    books.append({
-                        "id": item,
-                        "title": book.metadata.title,
-                        "author": ", ".join(book.metadata.authors),
-                    })
-
-    # 置顶书籍排最前（按 PINNED_BOOK_IDS 顺序），其余保持原顺序（稳定排序）
-    books.sort(key=lambda b: (0, PINNED_BOOK_IDS.index(b["id"])) if b["id"] in PINNED_BOOK_IDS else (1, 0))
-
-    return templates.TemplateResponse(request, "library.html", {"books": books})
+    """书库页面只返回静态壳；书目由版本化 API 提供。"""
+    return templates.TemplateResponse(request, "library.html", {})
 
 
 # ── 设置页：读写 database/settings.db ──
-@app.get("/settings", response_class=HTMLResponse)
+@app.get("/settings", response_class=HTMLResponse, include_in_schema=False)
 async def settings_view(request: Request):
     return templates.TemplateResponse(request, "settings.html", {})
 
 
-@app.get("/api/settings")
+@app.get("/api/settings", include_in_schema=False)
 async def read_settings():
     from agent.runtime.config import settings_snapshot
     return settings_snapshot()
 
 
-@app.put("/api/settings")
+@app.put("/api/settings", include_in_schema=False)
 async def update_settings(body: dict = Body(...)):
     from agent.runtime.config import save_settings
     try:
@@ -140,7 +155,7 @@ async def update_settings(body: dict = Body(...)):
         raise HTTPException(422, str(exc)) from None
 
 # ── 上传处理 POST /upload ──
-@app.post("/upload")
+@app.post("/upload", include_in_schema=False)
 async def upload_epub(file: UploadFile = File(...)):
     """【上传处理】接收 EPUB/TXT 文件，处理后加入书库"""
     if not file.filename:
@@ -175,6 +190,7 @@ async def upload_epub(file: UploadFile = File(...)):
 
         return JSONResponse({
             "success": True,
+            "id": folder,
             "title": book.metadata.title if book else folder,
             "author": ", ".join(book.metadata.authors) if book else "",
             "folder": folder,
@@ -187,7 +203,7 @@ async def upload_epub(file: UploadFile = File(...)):
 
 
 # ── 删书 DELETE /api/books/{book_id} ──
-@app.delete("/api/books/{book_id}")
+@app.delete("/api/books/{book_id}", include_in_schema=False)
 async def delete_book(book_id: str):
     """【删书】关闭该书数据库连接后整目录删除。
     schema.get_db 的常驻连接会锁住 book.db/-wal/-shm，Windows 上不先 close 则目录删不干净。"""
@@ -218,7 +234,7 @@ async def delete_book(book_id: str):
     return {"ok": True, "deleted": safe}
 
 # ── 首页跳转 GET /read/{book_id} → 第 0 章 ──
-@app.get("/read/{book_id}", response_class=HTMLResponse)
+@app.get("/read/{book_id}", response_class=HTMLResponse, include_in_schema=False)
 async def redirect_to_first_chapter(book_id: str):
     """【首页跳转】重定向到 /read/{book_id}/0。
     必须真重定向（而非直接渲染）：正文图片 src 是相对路径（images/...），
@@ -229,7 +245,7 @@ async def redirect_to_first_chapter(book_id: str):
     return RedirectResponse(url=f"/read/{urllib.parse.quote(book_id)}/{ci}#source={ci}:{pi}", status_code=302)
 
 
-@app.get("/favicon.ico")
+@app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     """【图标占位】避免浏览器自动请求在控制台刷 404"""
     return Response(status_code=204)
@@ -248,45 +264,35 @@ def _get_chapter_slice(book_id: str, book: Book, chapter_idx: int):
     return chapters, ch, html
 
 # ── 阅读页面 GET /read/{book_id}/{chapter_idx} ──
-@app.get("/read/{book_id}/{chapter_idx}", response_class=HTMLResponse)
+@app.get("/read/{book_id}/{chapter_idx}", response_class=HTMLResponse, include_in_schema=False)
 async def read_chapter(request: Request, book_id: str, chapter_idx: int):
-    """【阅读页面】chapter_idx = 章索引（0-based），每章为连续滚动页"""
+    """返回阅读页面静态壳；目录与正文由版本化 API 提供。"""
     book = load_book_cached(book_id)
     if not book:
         raise HTTPException(status_code=404, detail="Book not found")
-
-    heading_toc = _get_heading_toc(book_id, book)
-    chapters, ch, chapter_content = _get_chapter_slice(book_id, book, chapter_idx)
-
+    chapters = _build_chapters(_get_toc_pages(book_id, book))
+    if chapter_idx < 0 or chapter_idx >= len(chapters):
+        raise HTTPException(status_code=404, detail="Chapter not found")
     return templates.TemplateResponse(request, "reader.html", {
-        "book": book,
         "book_id": book_id,
-        "heading_toc": heading_toc,
         "chapter_idx": chapter_idx,
-        "chapter_title": ch['title'],
-        "chapter_content": chapter_content,
-        "total_chapters": len(chapters),
-        "anchor_map": _get_anchor_chapter_map(book_id, book),
+        "note_mode": False,
     })
 
 # ── 笔记界面 GET /notes/{book_id} ──
-@app.get("/notes/{book_id}", response_class=HTMLResponse)
+@app.get("/notes/{book_id}", response_class=HTMLResponse, include_in_schema=False)
 async def notes_page(request: Request, book_id: str):
     """【笔记界面】全书层（L1）+ 章节层（L2）专门页面；四角星入口跳转至此"""
     book = load_book_cached(book_id)
     if not book:
         raise HTTPException(status_code=404, detail="Book not found")
 
-    heading_toc = _get_heading_toc(book_id, book)
-    chapters, ch, content = _get_chapter_slice(book_id, book, 0)
     return templates.TemplateResponse(request, "reader.html", {
-        "book": book, "book_id": book_id, "heading_toc": heading_toc,
-        "chapter_idx": 0, "chapter_title": ch['title'], "chapter_content": content,
-        "total_chapters": len(chapters), "anchor_map": {}, "note_mode": True,
+        "book_id": book_id, "chapter_idx": 0, "note_mode": True,
     })
 
 # ── 整章 AJAX API GET /api/full_chapter/{book_id}/{chapter_idx} ──
-@app.get("/api/full_chapter/{book_id}/{chapter_idx}")
+@app.get("/api/full_chapter/{book_id}/{chapter_idx}", include_in_schema=False)
 async def api_full_chapter(book_id: str, chapter_idx: int):
     """【整章API】返回一整章的 HTML + 节列表"""
     book = load_book_cached(book_id)
@@ -303,7 +309,7 @@ async def api_full_chapter(book_id: str, chapter_idx: int):
     })
 
 # ── 图片服务 GET /read/{book_id}/images/{image_name} ──
-@app.get("/read/{book_id}/images/{image_name}")
+@app.get("/read/{book_id}/images/{image_name}", include_in_schema=False)
 async def serve_image(book_id: str, image_name: str):
     """【图片服务】返回书籍内的图片文件"""
     safe_book_id = os.path.basename(book_id)
@@ -312,4 +318,59 @@ async def serve_image(book_id: str, image_name: str):
     if not os.path.exists(img_path):
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(img_path)
+
+
+@app.get("/api/v1/books")
+async def list_books_api():
+    books = []
+    if os.path.exists(BOOKS_DIR):
+        for item in os.listdir(BOOKS_DIR):
+            if item.endswith("_data") and os.path.isdir(os.path.join(BOOKS_DIR, item)):
+                book = load_book_cached(item)
+                if book:
+                    books.append({"id": item, "title": book.metadata.title,
+                                  "author": ", ".join(book.metadata.authors)})
+    books.sort(key=lambda b: (0, PINNED_BOOK_IDS.index(b["id"])) if b["id"] in PINNED_BOOK_IDS else (1, 0))
+    return {"items": books}
+
+
+@app.get("/api/v1/books/{book_id}")
+async def get_book_api(book_id: str):
+    book = load_book_cached(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    chapters = _build_chapters(_get_toc_pages(book_id, book))
+    return {"id": book_id, "title": book.metadata.title,
+            "author": ", ".join(book.metadata.authors), "chapter_count": len(chapters),
+            "anchor_map": _get_anchor_chapter_map(book_id, book)}
+
+
+@app.post("/api/v1/books/import")
+async def import_book_api(file: UploadFile = File(...)):
+    return await upload_epub(file)
+
+
+@app.delete("/api/v1/books/{book_id}")
+async def delete_book_api(book_id: str):
+    return await delete_book(book_id)
+
+
+@app.get("/api/v1/books/{book_id}/chapters/{chapter_idx}/html")
+async def chapter_html_api(book_id: str, chapter_idx: int):
+    return await api_full_chapter(book_id, chapter_idx)
+
+
+@app.get("/api/v1/books/{book_id}/images/{image_name}")
+async def book_image_api(book_id: str, image_name: str):
+    return await serve_image(book_id, image_name)
+
+
+@app.get("/api/v1/settings")
+async def get_settings_api():
+    return await read_settings()
+
+
+@app.put("/api/v1/settings")
+async def put_settings_api(body: dict = Body(...)):
+    return await update_settings(body)
 

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{ book.metadata.title }} · Gnosys</title>
+<title>Gnosys · 阅读器</title>
 <link rel="stylesheet" href="/static/css/workspace.css?v={{ asset_version() }}">
 {% include 'markdown_assets.html' %}
 {% include 'scrollbar.html' %}
@@ -35,7 +35,7 @@
   <header class="reading-header">
    <div class="reading-heading">
     <div class="eyebrow">READ &amp; UNDERSTAND</div>
-    <h1 id="chapter-title">{{ chapter_title }}</h1>
+    <h1 id="chapter-title">正在加载…</h1>
    </div>
    <div class="reading-preferences" aria-label="阅读显示设置">
     <div class="reading-pref">
@@ -78,6 +78,6 @@
 </div>
 <div id="selection-actions" class="selection-actions" hidden><button id="selection-chat">加入对话</button><button id="selection-concept">解释概念</button><button id="selection-semantic">语义笔记</button></div>
 <div id="toast" role="status" hidden></div>
-<script>window.GNOSYS = {bookId: {{ book_id|tojson }}, chapter: {{ chapter_idx }}, total: {{ total_chapters }}, title: {{ book.metadata.title|tojson }}, noteMode: {{ note_mode|default(false)|tojson }}, anchorMap: {{ anchor_map|default({})|tojson }}};</script>
+<script>window.GNOSYS = {bookId: {{ book_id|tojson }}, chapter: {{ chapter_idx }}, total: 0, title: '', noteMode: {{ note_mode|default(false)|tojson }}, anchorMap: {}};</script>
 <script src="/static/js/workspace.js?v={{ asset_version() }}" defer></script>
 </body></html>

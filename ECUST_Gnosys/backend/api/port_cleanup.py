@@ -8,8 +8,8 @@ import sys
 import time
 
 
-HOST = "127.0.0.1"
-PORT = 8123
+HOST = os.environ.get("GNOSYS_SERVER_HOST", "127.0.0.1")
+PORT = int(os.environ.get("GNOSYS_SERVER_PORT", "8123"))
 
 
 def _windows_listening_pids(output: str, port: int) -> list[int]:

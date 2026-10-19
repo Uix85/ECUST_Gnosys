@@ -69,7 +69,7 @@ var BOOK_ID = {{ book_id | tojson }};
 (async function loadBookLayer() {
     var doc = document.getElementById('nb-doc');
     try {
-        var r = await fetch('/api/layer/book/' + encodeURIComponent(BOOK_ID));
+        var r = await fetch('/api/v1/layer/book/' + encodeURIComponent(BOOK_ID));
         var d = await r.json();
         if (d && d.content) {
             doc.innerHTML = renderMarkdown(d.content);

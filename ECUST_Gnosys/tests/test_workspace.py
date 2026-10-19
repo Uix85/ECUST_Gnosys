@@ -38,7 +38,7 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         r = await self.client.post('/upload', files={'file':('研究.txt', TEXT.encode(),'text/plain')})
         self.assertEqual(r.status_code,200,r.text)
         self.book = r.json()['folder']; fake_model.BOOK_ID=self.book
-        self.base='/api/workspace/'+self.book; self.runs='/api/agent/'+self.book+'/runs'; self.chat='/api/chat/'+self.book
+        self.base='/api/workspace/'+self.book; self.v1='/api/v1'; self.runs='/api/agent/'+self.book+'/runs'; self.chat='/api/chat/'+self.book
         self.model=ReadingModel()
         self.patches=[patch('agent.runs.layer.build_model',return_value=self.model),patch('agent.layers.l3_paragraph.build_model',return_value=self.model),patch('agent.chat.build_model',return_value=self.model)]
         for p in self.patches:p.start()
@@ -92,6 +92,7 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
             chapter=await self.client.get(f'/api/full_chapter/{folder}/0');self.assertEqual(chapter.status_code,200,chapter.text)
             self.assertIn('images/pixel.png',chapter.json()['html']);self.assertNotIn('onerror',chapter.json()['html'])
             served=await self.client.get(f'/read/{folder}/images/pixel.png');self.assertEqual(served.status_code,200);self.assertEqual(served.content[:8],b'\x89PNG\r\n\x1a\n')
+            served=await self.client.get(f'/api/v1/books/{folder}/images/pixel.png');self.assertEqual(served.status_code,200);self.assertEqual(served.content[:8],b'\x89PNG\r\n\x1a\n')
             self.assertEqual((await self.client.get(f'/api/full_chapter/{folder}/99')).status_code,404)
 
     async def test_outline_reference_search_state_bookmarks(self):
@@ -106,6 +107,28 @@ class WorkspaceTest(unittest.IsolatedAsyncioTestCase):
         mark=(await self.client.post(self.base+'/bookmarks',json={'reference':ref})).json()['id'];self.assertEqual(len((await self.client.get(self.base+'/bookmarks')).json()['items']),1)
         await self.client.delete(self.base+'/bookmarks/'+mark);self.assertFalse((await self.client.get(self.base+'/bookmarks')).json()['items'])
         r=await self.client.get(self.base+'/chapter/0');self.assertEqual(r.status_code,200);self.assertEqual(r.json()['paragraphs'][3]['text'],SOURCE)
+
+    async def test_versioned_public_api_and_error_shape(self):
+        books=(await self.client.get(self.v1+'/books')).json()['items']
+        self.assertTrue(any(item['id']==self.book for item in books))
+        detail=await self.client.get(self.v1+'/books/'+self.book)
+        self.assertEqual(detail.status_code,200,detail.text)
+        self.assertGreater(detail.json()['chapter_count'],0)
+        outline=await self.client.get(self.v1+'/workspace/'+self.book+'/outline')
+        self.assertEqual(outline.status_code,200,outline.text)
+        self.assertTrue(outline.json()['items'])
+        shell=await self.client.get('/read/'+self.book+'/0')
+        self.assertEqual(shell.status_code,200,shell.text)
+        self.assertNotIn(SOURCE,shell.text)
+        chapter=await self.client.get(self.v1+'/workspace/'+self.book+'/chapter/0')
+        self.assertEqual(chapter.status_code,200,chapter.text)
+        self.assertIn(SOURCE,[paragraph['text'] for paragraph in chapter.json()['paragraphs']])
+        invalid=await self.client.get(self.v1+'/workspace/'+self.book+'/search')
+        self.assertEqual(invalid.status_code,422,invalid.text)
+        self.assertEqual(invalid.json()['error']['code'],'invalid_request')
+        missing=await self.client.get(self.v1+'/books/missing_data')
+        self.assertEqual(missing.status_code,404,missing.text)
+        self.assertIn('message',missing.json()['error'])
 
     async def test_locator_mode_keeps_reader_payload(self):
         """建了定位表之后，/chapter 必须仍给前端 html+tag（定位表只存文本）。"""

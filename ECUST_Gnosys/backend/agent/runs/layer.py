@@ -1,13 +1,15 @@
 """Shared execution context and review lifecycle for long reading runs."""
 
 import json
+import os
 import time
 import uuid
 
 from fastapi import HTTPException
 from agent.tools.book import book_db, get_paragraph
 from agent.runtime.config import load_config
-from agent.runtime.engine import AgentTask, LoopBudget, SubmitSpec, TaskSpec, build_model
+from agent.runtime.engine import LoopBudget, SubmitSpec, TaskSpec, build_model
+from agent.remote import execute_agent
 from agent.runs.records import _event
 from agent.tools.reading import book_reading_tools
 from agent.layers.policy import (
@@ -30,7 +32,7 @@ class LayerRun:
         self.request = json.loads(self.row['request_json'])
         self.layer, self.target = self.request['layer'], self.request.get('target', {})
         self.config = load_config()
-        self.model = build_model(self.config)
+        self.model = build_model(self.config) if os.environ.get("GNOSYS_AGENT_MODE", "local") != "http" else None
         self.ledger, self.coverage, self.originals = {}, [], {}
         self.candidate = None
         self.budget = LoopBudget(self.config.max_requests, self.config.max_tool_calls, time.monotonic() + self.config.run_timeout)
@@ -48,7 +50,8 @@ class LayerRun:
                                 validate_review if review else lambda x: validate_result(self.book_id, x, self.ledger, SECTIONS.get(self.layer, []) if final else []),
                                 ['approved', 'issues', 'alternatives'] if review else ['content', 'sources'])
             spec = TaskSpec(self.layer, prompt, materials, submit, tools=book_reading_tools(self.book_id, self.ledger)['tools'])
-        return await AgentTask(spec, model=self.model, event=self.event, cancelled=self.signal, budget=self.budget, config=self.config).run()
+        return await execute_agent(spec, self.config, model=self.model, emit=self.event,
+                                   cancelled=self.signal, budget=self.budget)
 
     def remember(self, ci, paras):
         for p in paras:

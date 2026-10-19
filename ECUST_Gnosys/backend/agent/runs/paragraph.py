@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import time
 import uuid
 from dataclasses import replace
@@ -15,9 +16,8 @@ from agent.tools.book import (
 from agent.tools.reading import book_reading_skills, load_book_reading_skill
 from agent.tools.context import material_refs
 from agent.runtime.config import load_config
-from agent.runtime.loop import run_task
-from agent.runtime.sdk import build_model
-from agent.runtime.task import AgentCancelled, AgentError, ExecutionContext, LoopBudget
+from agent.runtime.task import AgentCancelled, AgentError, LoopBudget
+from agent.remote import execute_agent
 from agent.tasks.l3_paragraph import (
     base_prompt, generate_spec, review_materials, review_spec, revise_prompt,
     revise_spec, revision_followup,
@@ -95,7 +95,11 @@ class ParagraphRun:
         # 运行记录里冻结了创建时的规范版本，避免中途切换版本导致口径不一致。
         self.spec_version = run.get("spec_version") or current_version
         self.prompt = run.get("prompt_template") or base_prompt(self.spec)
-        self.model = build_model(config)
+        if os.environ.get("GNOSYS_AGENT_MODE", "local") != "http":
+            from agent.runtime.sdk import build_model
+            self.model = build_model(config)
+        else:
+            self.model = None
         self.write_session = SQLiteSession(f"{self.task_id}-writing")
         self.write_tools = []
 
@@ -124,15 +128,12 @@ class ParagraphRun:
         task_spec = replace(task_spec, prompt=build_instructions(
             task_spec, tool_budget=self.budget.max_tool_calls,
         ))
-        return await run_task(task_spec, ExecutionContext(
-            model=self.model,
-            emit=self._agent_event,
-            cancelled=self.cancelled,
-            budget=self.budget,
-            session=session,
-            mounted_tools=mounted_tools,
-            config=self.config,
-        ))
+        return await execute_agent(
+            task_spec, self.config, emit=self._agent_event, cancelled=self.cancelled,
+            budget=self.budget, session=session,
+            session_key=f"{self.task_id}-writing" if session else None,
+            mounted_tools=mounted_tools, model=self.model,
+        )
 
     async def _generate(self) -> dict:
         """生成候选稿并立即持久化。

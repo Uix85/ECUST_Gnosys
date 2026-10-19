@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import time
 import uuid
 
@@ -18,6 +19,7 @@ from agent.runtime.engine import (
     _material_refs,
 )
 from agent.tools.reading import book_reading_tools
+from agent.remote import execute_agent
 from reader.workspace import check_references, outline_nodes, dumps, now
 
 ACTIVE = {}
@@ -244,6 +246,54 @@ async def answer(book_id, session_id, message_id, content, refs, signal):
                   '引文先调用 verify_source_quote 核对；证据链接统一写 [原文](#source=章序:段序)，章序段序使用工具给出的从0开始的数字。'
                   f'已有笔记只能作为参考。本次工具预算 {config.max_tool_calls} 次：优先粗读后精读，接近预算时停止检索并直接回答；'
                   '工具返回预算已用完时，必须停止调用工具，基于已读材料作答。证据不足就坦诚说明。')
+        if os.environ.get("GNOSYS_AGENT_MODE", "local") == "http":
+            from agent.runtime.task import TaskSpec as RemoteTaskSpec
+            remote_spec = RemoteTaskSpec(
+                name="chat", prompt=prompt, materials={"question": content, "references": refs},
+                tools=tools, stream=True, tool_limit_action="finish",
+            )
+            session_key = f"chat:{book_id}:{session_id}"
+            with db:
+                db.execute("UPDATE chat_messages SET status='running' WHERE id=?", (message_id,))
+
+            async def remote_event(kind, message, data):
+                nonlocal text
+                data = data or {}
+                if kind == 'model_start':
+                    event(db, message_id, 'status', {'message': '正在组织回答'})
+                elif kind == 'tool_start':
+                    event(db, message_id, 'status', {'message': '正在检索或核对原文', 'tool': data.get('tool')})
+                    event(db, message_id, 'tool', data)
+                elif kind in ('tool_end', 'tool_error'):
+                    event(db, message_id, 'tool', {key: value for key, value in data.items() if key != 'result'})
+                    if kind == 'tool_end':
+                        material = _material_refs(data.get('result'))
+                        if material:
+                            event(db, message_id, 'sources', material)
+                elif kind == 'tool_budget_exhausted':
+                    event(db, message_id, 'status', {'message': message, **data})
+                elif kind == 'text_delta':
+                    delta = data.get('text', '')
+                    text += delta
+                    with db:
+                        db.execute('UPDATE chat_messages SET content=? WHERE id=?', (text, message_id))
+                    event(db, message_id, 'delta', {'text': delta})
+                elif kind == 'reasoning_delta' and data.get('text'):
+                    event(db, message_id, 'reasoning', {'text': data['text']})
+
+            result = await execute_agent(remote_spec, config, cancelled=signal, emit=remote_event,
+                                         budget=budget, session_key=session_key)
+            if not text and isinstance(result, str):
+                text = result
+            sources = [{'chapter_idx': ci, 'paragraph_index': pi,
+                        'fingerprint': get_paragraph(book_id, ci, pi)['fingerprint'],
+                        'kind': 'selection', 'quote': get_paragraph(book_id, ci, pi)['text'][:240],
+                        'label': f'第 {ci+1} 章 · 第 {pi+1} 段'} for ci, pi in ledger]
+            with db:
+                db.execute("UPDATE chat_messages SET content=?,references_json=?,status='completed',error=NULL WHERE id=?",
+                           (text, dumps(sources), message_id))
+            event(db, message_id, 'completed', {'status': 'completed'})
+            return
         settings = ModelSettings(extra_body={'enable_thinking': False} if config.disable_thinking else None, tool_choice='auto')
         agent = Agent(name='gnosys-conversation', instructions=prompt, model=build_model(config), tools=SDKFunctionTools(sdk_tools), model_settings=settings)
         session = sdk_session(book_id, session_id)

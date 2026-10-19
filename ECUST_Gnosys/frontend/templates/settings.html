@@ -34,6 +34,7 @@ const GROUPS=[['连接',['AGENT_API_BASE_URL','AGENT_MODEL','AGENT_API_KEY','AGE
               ['行为',['AGENT_DISABLE_THINKING']]];
 const SOURCE={database:'来自 database/settings.db',default:'默认值'};
 let fields=[];
+async function errorMessage(response){const data=await response.json().catch(()=>({}));return data.error?.message||data.detail||`HTTP ${response.status}`;}
 function row(f){
   const wrap=document.createElement('div');
   if(f.kind==='bool'){
@@ -81,7 +82,7 @@ function settingsReturnTarget(){
   return target;
 }
 async function load(){
-  const r=await fetch('/api/settings');if(!r.ok)throw new Error(await r.text());render(await r.json());
+  const r=await fetch('/api/v1/settings');if(!r.ok)throw new Error(await errorMessage(r));render(await r.json());
 }
 form.addEventListener('submit',async e=>{
   e.preventDefault();const values={};
@@ -93,9 +94,9 @@ form.addEventListener('submit',async e=>{
   }
   document.getElementById('save').disabled=true;
   try{
-    const r=await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values})});
+    const r=await fetch('/api/v1/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values})});
     const data=await r.json();
-    if(!r.ok)throw new Error(data.detail||'保存失败');
+    if(!r.ok)throw new Error(data.error?.message||data.detail||'保存失败');
     render(data);savedAt.textContent='已保存 '+new Date().toLocaleTimeString();
     location.assign(settingsReturnTarget());
   }catch(err){statusLine.className='';statusLine.textContent='保存失败：'+err.message;}

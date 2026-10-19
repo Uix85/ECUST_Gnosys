@@ -11,7 +11,7 @@ db_paths.SETTINGS_DB = Path(sys.argv[3])
 settings_db.SETTINGS_DB = db_paths.SETTINGS_DB
 
 from server import app
-from agent.runs import chat
+from agent import chat
 from fake_model import ReadingModel
 
 chat.build_model = lambda _config: ReadingModel(delay=0.04)

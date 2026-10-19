@@ -10,6 +10,13 @@ await fs.writeFile(uploadFixture,'端到端导入样书\n第一章 临时测试\
 function pass(name, evidence) { results.push({name, status:'passed', evidence}); console.log('PASS ' + name); }
 async function visible(selector) { await page.waitForSelector(selector, {state:'visible'}); }
 async function ready() { await page.waitForFunction(() => window.GNOSYS?.ready && document.querySelector('#chapter-content[aria-busy=false]') && document.querySelectorAll('.source').length > 0); }
+async function selectNoteLayer(layer) {
+    await page.click('[data-panel="note"]');
+    await page.click(`[data-note-layer="${layer}"]`);
+    await page.waitForFunction(layer => document.querySelector(`[data-note-layer="${layer}"]`)?.getAttribute('aria-selected') === 'true', layer);
+    await page.mouse.move(1, 1, {label:'leave note layer menu'});
+    await page.evaluate(()=>document.activeElement?.blur());
+}
 async function waitRun(layer, status='completed') { await page.waitForFunction(([layer,status]) => [...document.querySelectorAll('#runs-list .run-card header')].some(node=>node.textContent.includes(layer+' · '+status)),[layer,status],{timeout:15000}); }
 async function viewport(width, height=980) {
     // Ego Lite can apply a profile zoom. Account for it, then assert the actual CSS viewport.
@@ -71,7 +78,7 @@ await page.evaluate(()=>{window.__copied='';Object.defineProperty(navigator,'cli
 await page.click('.message.assistant .message-actions button >> nth=0');
 await page.waitForFunction(()=>window.__copied.includes('阅读分析'));
 await page.click('.message.assistant .message-actions button >> nth=1');
-await page.waitForFunction(()=>document.querySelector('#note-layer').value==='chat'&&document.querySelector('#note-save-state').textContent==='已保存');
+await page.waitForFunction(()=>document.querySelector('#note-target').textContent==='对话摘记'&&document.querySelector('#note-save-state').textContent==='已保存');
 assert.ok(await page.evaluate(()=>document.querySelector('#note-editor').value.includes('公式：')));
 pass('Agent 回答复制并保存为对话摘记',true);
 await page.click('[data-panel=chat]');
@@ -88,7 +95,7 @@ assert.equal(resumed.count,3);assert.equal(resumed.analysis,1);assert.equal(resu
 const security=await page.evaluate(()=>{const box=document.createElement('div');box.innerHTML=renderMarkdown('<img src=x onerror="window.__xss=1">\n\n[x](javascript:alert(1))\n\n<svg onload=alert(1)></svg>\n\n~~删除~~\n\n> 引用\n\n$$x^2$$\n\n```js\nconst x = 1\n');return {unsafe:!!box.querySelector('script,iframe,svg,[onerror],[onload],a[href^="javascript:"]'),strike:!!box.querySelector('s'),quote:!!box.querySelector('blockquote'),math:!!box.querySelector('.katex'),unfinishedCode:!!box.querySelector('pre code')};});
 assert.equal(security.unsafe,false);assert.ok(security.strike&&security.quote&&security.math&&security.unfinishedCode);pass('危险 HTML/链接与未闭合代码块',security);
 
-await page.click('[data-panel="note"]');await page.evaluate(()=>{const s=document.querySelector('#note-layer');s.value='L1';s.dispatchEvent(new Event('change',{bubbles:true}));});await page.waitForFunction(()=>document.querySelector('#note-layer').value==='L1');await page.click('#edit-note');await page.fill('#note-editor','## E2E 手工笔记\n\n- 原文依据\n- 读者记录');await page.click('#save-note');
+await selectNoteLayer('L1');await page.click('#edit-note');await page.fill('#note-editor','## E2E 手工笔记\n\n- 原文依据\n- 读者记录');await page.click('#save-note');
 await page.waitForFunction(()=>document.querySelector('#note-save-state').textContent==='已保存');
 await page.click('#edit-note');assert.ok((await page.evaluate(()=>document.querySelector('#note-preview').textContent)).includes('E2E 手工笔记'));
 const noteDownload=page.waitForEvent('download');await page.click('#export-note');const noteFile=await noteDownload;await noteFile.saveAs('/tmp/gnosys-e2e-note.md');assert.ok((await fs.readFile('/tmp/gnosys-e2e-note.md','utf8')).includes('E2E 手工笔记'));
@@ -97,18 +104,18 @@ pass('笔记编辑、预览、保存与 Markdown 导出','/tmp/gnosys-e2e-note.m
 await page.click('#generate-note');
 await waitRun('L1');
 pass('全书 AI 从页面触发至完整覆盖汇总','completed');
-await page.click('[data-panel="note"]');await page.evaluate(()=>{const s=document.querySelector('#note-layer');s.value='L1';s.dispatchEvent(new Event('change',{bubbles:true}));});await page.waitForFunction(()=>document.querySelector('#note-layer').value==='L1');
+await selectNoteLayer('L1');
 
 // Actual concurrent save through another client: the UI must retain unsaved input.
 await page.click('#edit-note');await page.fill('#note-editor','浏览器仍未保存的修改');
-await page.evaluate(async()=>{const base='/api/workspace/'+encodeURIComponent(GNOSYS.bookId),n=await(await fetch(base+'/note/read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({layer:'L1'})})).json();await fetch(base+'/note',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({layer:'L1',content:'另一个窗口保存',baseline:{revision:n.revision,content:n.content,legacy_version:n.legacy_version||''}})});});
+await page.evaluate(async()=>{const base='/api/v1/workspace/'+encodeURIComponent(GNOSYS.bookId),n=await(await fetch(base+'/note/read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({layer:'L1'})})).json();await fetch(base+'/note',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({layer:'L1',content:'另一个窗口保存',baseline:{revision:n.revision,content:n.content,legacy_version:n.legacy_version||''}})});});
 const conflictDownload=page.waitForEvent('download');await page.click('#save-note');const conflict=await conflictDownload;await conflict.saveAs('/tmp/gnosys-e2e-conflict.md');
 assert.equal(await page.evaluate(()=>document.querySelector('#note-editor').value),'浏览器仍未保存的修改');
 assert.ok((await page.evaluate(()=>document.querySelector('#note-save-state').textContent)).includes('冲突'));
 pass('并发保存冲突保留输入并导出备份','/tmp/gnosys-e2e-conflict.md');
 // Discard only the QA draft through the UI's explicit dialog.
-await page.click('[data-panel="note"]');await page.evaluate(()=>{const s=document.querySelector('#note-layer');s.value='L2';s.dispatchEvent(new Event('change',{bubbles:true}));});
-await page.waitForFunction(()=>document.querySelector('#note-layer').value==='L2');
+await page.evaluate(()=>window.confirm=()=>true);
+await selectNoteLayer('L2');
 await page.click('#generate-note');await waitRun('L2');
 pass('章节 AI 从页面触发至完成','completed');
 await page.click('#generate-semantic');await page.waitForFunction(()=>document.querySelector('.semantic-note .short'),undefined,{timeout:15000});
@@ -116,7 +123,7 @@ pass('语义 AI 与段落旁注发布',true);
 
 await page.evaluate(()=>{const p=document.querySelector('#paragraph-3 p'),r=document.createRange();r.setStart(p.firstChild,0);r.setEnd(p.firstChild,4);const s=getSelection();s.removeAllRanges();s.addRange(r);p.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));});
 await page.click('#selection-semantic');
-await page.waitForFunction(()=>document.querySelector('#note-layer').value==='L3'&&document.querySelector('#note-preview').textContent.length>0);
+await page.waitForFunction(()=>document.querySelector('[data-note-layer="L3"]').getAttribute('aria-selected')==='true'&&document.querySelector('#note-preview').textContent.length>0);
 pass('原文划线打开该段语义笔记',await page.evaluate(()=>document.querySelector('#note-target').textContent));
 await page.evaluate(()=>{const p=document.querySelector('#paragraph-3 p'),r=document.createRange();r.setStart(p.firstChild,0);r.setEnd(p.firstChild,4);const s=getSelection();s.removeAllRanges();s.addRange(r);p.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));});
 await page.click('#selection-concept');
@@ -124,30 +131,30 @@ await waitRun('L4');
 pass('划词概念 AI、意义地图与当前位置解释','completed');
 
 await page.click('#next');await page.waitForFunction(()=>document.querySelector('#chapter-title').textContent.includes('第二章'));
-await page.click('#open-chapter-note');await page.waitForFunction(()=>document.querySelector('#note-layer').value==='L2');
+await selectNoteLayer('L2');
 await page.evaluate(async()=>fetch('/__qa/model',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fail:true})}));
 await page.click('#generate-note');await waitRun('L2','failed');
-const runsBeforeRetry=await page.evaluate(async()=> (await (await fetch('/api/agent/'+encodeURIComponent(GNOSYS.bookId)+'/runs')).json()).items.map(x=>x.id));
+const runsBeforeRetry=await page.evaluate(async()=> (await (await fetch('/api/v1/agent/'+encodeURIComponent(GNOSYS.bookId)+'/runs')).json()).items.map(x=>x.id));
 await page.evaluate(async()=>fetch('/__qa/model',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fail:false,approve:true})}));
 await page.evaluate(()=>{const card=[...document.querySelectorAll('#runs-list .run-card')].find(x=>x.querySelector('header')?.textContent.includes('L2 · failed'));card.querySelector('button').click();});
-await page.waitForFunction(async(before)=>{const items=(await(await fetch('/api/agent/'+encodeURIComponent(GNOSYS.bookId)+'/runs')).json()).items;return items.some(x=>!before.includes(x.id)&&x.layer==='L2'&&x.request.target.chapter_idx===1);},runsBeforeRetry,{timeout:15000});
-const retriedRunId=await page.evaluate(async(before)=>{const items=(await(await fetch('/api/agent/'+encodeURIComponent(GNOSYS.bookId)+'/runs')).json()).items;return items.find(x=>!before.includes(x.id)&&x.layer==='L2'&&x.request.target.chapter_idx===1)?.id;},runsBeforeRetry);
+await page.waitForFunction(async(before)=>{const items=(await(await fetch('/api/v1/agent/'+encodeURIComponent(GNOSYS.bookId)+'/runs')).json()).items;return items.some(x=>!before.includes(x.id)&&x.layer==='L2'&&x.request.target.chapter_idx===1);},runsBeforeRetry,{timeout:15000});
+const retriedRunId=await page.evaluate(async(before)=>{const items=(await(await fetch('/api/v1/agent/'+encodeURIComponent(GNOSYS.bookId)+'/runs')).json()).items;return items.find(x=>!before.includes(x.id)&&x.layer==='L2'&&x.request.target.chapter_idx===1)?.id;},runsBeforeRetry);
 assert.ok(retriedRunId);
 await page.waitForFunction(id=>document.querySelector('#run-'+id)?.querySelector('header')?.textContent.includes('L2 · completed'),retriedRunId,{timeout:15000});
 await page.waitForTimeout(300); // Let the completed-run handler finish reopening its note.
 pass('章节任务失败后从任务面板重试','completed');
 await page.evaluate(async()=>fetch('/__qa/model',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({delay:.4,approve:true,fail:false})}));
-await page.click('[data-panel="note"]');await page.waitForFunction(()=>!document.querySelector('#note-panel').hidden);
-const runsBeforeCancel=await page.evaluate(async()=> (await (await fetch('/api/agent/'+encodeURIComponent(GNOSYS.bookId)+'/runs')).json()).items.map(x=>x.id));
+await selectNoteLayer('L2');await page.waitForFunction(()=>!document.querySelector('#note-panel').hidden);
+const runsBeforeCancel=await page.evaluate(async()=> (await (await fetch('/api/v1/agent/'+encodeURIComponent(GNOSYS.bookId)+'/runs')).json()).items.map(x=>x.id));
 await page.click('#generate-note');
-await page.waitForFunction(async(before)=>{const items=(await(await fetch('/api/agent/'+encodeURIComponent(GNOSYS.bookId)+'/runs')).json()).items;return items.some(x=>!before.includes(x.id)&&x.layer==='L2'&&x.status==='running');},runsBeforeCancel,{timeout:10000});
-const cancelRunId=await page.evaluate(async(before)=>{const items=(await(await fetch('/api/agent/'+encodeURIComponent(GNOSYS.bookId)+'/runs')).json()).items;return items.find(x=>!before.includes(x.id)&&x.layer==='L2'&&x.status==='running')?.id;},runsBeforeCancel);
+await page.waitForFunction(async(before)=>{const items=(await(await fetch('/api/v1/agent/'+encodeURIComponent(GNOSYS.bookId)+'/runs')).json()).items;return items.some(x=>!before.includes(x.id)&&x.layer==='L2'&&x.status==='running');},runsBeforeCancel,{timeout:10000});
+const cancelRunId=await page.evaluate(async(before)=>{const items=(await(await fetch('/api/v1/agent/'+encodeURIComponent(GNOSYS.bookId)+'/runs')).json()).items;return items.find(x=>!before.includes(x.id)&&x.layer==='L2'&&x.status==='running')?.id;},runsBeforeCancel);
 await page.evaluate(id=>document.querySelector('#run-'+id+' button')?.click(),cancelRunId);
-await page.waitForFunction(async(id)=>{const item=await(await fetch('/api/agent/'+encodeURIComponent(GNOSYS.bookId)+'/runs/'+id)).json();return item.status==='canceled';},cancelRunId,{timeout:10000});
+await page.waitForFunction(async(id)=>{const item=await(await fetch('/api/v1/agent/'+encodeURIComponent(GNOSYS.bookId)+'/runs/'+id)).json();return item.status==='canceled';},cancelRunId,{timeout:10000});
 await page.evaluate(async()=>fetch('/__qa/model',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({delay:.015,approve:true,fail:false})}));
 pass('运行中的章节任务可从页面取消',cancelRunId);
 await page.evaluate(async()=>fetch('/__qa/model',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approve:false})}));
-await page.click('[data-panel="note"]');
+await selectNoteLayer('L2');
 await page.waitForFunction(()=>document.querySelector('[data-panel="note"]').getAttribute('aria-selected')==='true'&&!document.querySelector('#note-panel').hidden);
 await page.waitForTimeout(300);
 await page.click('#generate-note');await waitRun('L2','needs_review');
@@ -178,7 +185,7 @@ await page.reload();await ready();
 assert.equal(await page.evaluate(()=>localStorage.getItem('gnosys-font-size')),'22');assert.equal(await page.evaluate(()=>localStorage.getItem('gnosys-line-height')),'2.2');
 pass('阅读字号与行距持久化',true);
 await viewport(1440);
-const beforeResize=await page.evaluate(()=>{const r=document.querySelector('#inspector').getBoundingClientRect();return {width:r.width,x:r.right-2,y:r.bottom-2}});
+const beforeResize=await page.evaluate(()=>{const r=document.querySelector('#inspector').getBoundingClientRect();return {width:r.width,x:r.left+2,y:r.top+r.height/2}});
 assert.ok(beforeResize.width>=360,beforeResize.width);
 const dragBy=-35;
 await page.cdp('Input.dispatchMouseEvent',{type:'mouseMoved',x:beforeResize.x,y:beforeResize.y});await page.cdp('Input.dispatchMouseEvent',{type:'mousePressed',x:beforeResize.x,y:beforeResize.y,button:'left',clickCount:1});
@@ -213,7 +220,7 @@ assert.ok(await page.evaluate(()=>document.querySelector('#chapter-title').textC
 await page.goto(origin+'/');await page.evaluate(()=>window.confirm=()=>true);
 await page.click('.delete-book[data-book="'+imported.id+'"]');
 await page.waitForFunction(()=>![...document.querySelectorAll('.book-card h2')].some(n=>n.textContent==='端到端导入样书'));
-const missing=await page.fetch('/api/books/'+encodeURIComponent(imported.id),{method:'DELETE'});assert.equal(missing.status,404);
+const missing=await page.fetch('/api/v1/books/'+encodeURIComponent(imported.id));assert.equal(missing.status,404);
 pass('书库导入、打开、删除与只读当前临时书籍',imported);
 const errors=await page.evaluate(()=>window.__qaErrors||[]);assert.deepEqual(errors,[]);pass('浏览器未捕获异常',errors);
 await fs.writeFile(report,JSON.stringify({origin,spaceId:task.spaceId,passed:results.length,results},null,2));console.log('REPORT '+report);

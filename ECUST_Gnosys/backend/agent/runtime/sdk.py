@@ -1,6 +1,7 @@
 """Agents SDK 适配：模型、工具、技能和执行事件。"""
 
 import json
+import inspect
 from dataclasses import replace
 from typing import Any
 
@@ -163,6 +164,8 @@ class SDKExecution:
         """submit 工具：validator 通过则记录结果并触发终止；失败以 ValueError 退回模型重试。"""
         try:
             submitted = self.task.submit.validator(args)
+            if inspect.isawaitable(submitted):
+                submitted = await submitted
         except Exception as exc:
             raise ValueError(f"提交被退回：{exc}") from exc
         self.submitted = submitted

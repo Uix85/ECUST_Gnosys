@@ -1,7 +1,7 @@
 (function () {
 'use strict';
 const cfg = window.GNOSYS, book = encodeURIComponent(cfg.bookId);
-const base = '/api/workspace/' + book, agentBase = '/api/agent/' + book + '/runs', chatBase = '/api/chat/' + book;
+const base = '/api/v1/workspace/' + book, agentBase = '/api/v1/agent/' + book + '/runs', chatBase = '/api/v1/chat/' + book;
 const $ = id => document.getElementById(id);
 const state = {chapter: cfg.chapter, nodes: [], paragraphs: [], references: [], session: '', messages: [], activeMessage: '',
     note: null, dirty: false, editing: false, selected: [], nav: 'outline', panel: 'chat', generation: 0,
@@ -13,7 +13,7 @@ async function api(url, body, method) {
     const options = body === undefined ? {} : {method: method || 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)};
     if (method && body === undefined) options.method = method;
     const r = await fetch(url, options), data = await r.json();
-    if (!r.ok) { const detail = data.detail; const error = new Error(typeof detail === 'string' ? detail : detail?.message || JSON.stringify(detail)); error.detail = detail; error.status = r.status; throw error; }
+    if (!r.ok) { const detail = data.error || data.detail; const error = new Error(typeof detail === 'string' ? detail : detail?.message || JSON.stringify(detail)); error.detail = detail; error.status = r.status; throw error; }
     return data;
 }
 function on(id, type, fn) { $(id).addEventListener(type, e => Promise.resolve(fn(e)).catch(error => toast(error.message))); }
@@ -147,7 +147,7 @@ async function goto(ci, pi = 0, updateHistory = true, edge = 'top') {
         if (p.paragraph_index === 0 && p.text.replace(/\s+/g, '') === titleKey) row.classList.add('chapter-heading-row');
         const tag = /^h[1-6]$/.test(p.tag) ? p.tag : p.tag === 'blockquote' ? 'blockquote' : 'p';
         const inner = el(tag); inner.innerHTML = DOMPurify.sanitize(p.html); source.append(inner);
-        source.querySelectorAll('img').forEach(image => { const src = image.getAttribute('src'); if (src && !/^(https?:|\/)/i.test(src)) image.src = '/read/' + book + '/' + src; });
+        source.querySelectorAll('img').forEach(image => { const src = image.getAttribute('src'); if (src && !/^(https?:|\/)/i.test(src)) image.src = '/api/v1/books/' + book + '/images/' + encodeURIComponent(src.split('/').pop()); });
         const side = el('aside', 'semantic-note'); side.setAttribute('aria-label', '段落解释');
         if (p.note) {
             side.append(el('div', 'short', p.note.short || '查看解释'));
@@ -155,7 +155,7 @@ async function goto(ci, pi = 0, updateHistory = true, edge = 'top') {
         } else if (needsSemanticNote(p.text)) side.append(button('生成段落解释', () => generate({layer:'L3', paragraph_ref:{chapter_idx:ci, paragraph_index:p.paragraph_index, fingerprint:p.fingerprint}, spec_type:$('agent-spec').value})));
         row.append(source, side); fragment.append(row);
     });
-    data.images.forEach(markup => { const holder = el('div'); holder.innerHTML = DOMPurify.sanitize(markup); holder.querySelectorAll('img').forEach(img => { img.classList.add('book-image'); const src = img.getAttribute('src'); if (src && !/^(https?:|\/)/i.test(src)) img.src = '/read/' + book + '/' + src; }); fragment.append(holder); });
+    data.images.forEach(markup => { const holder = el('div'); holder.innerHTML = DOMPurify.sanitize(markup); holder.querySelectorAll('img').forEach(img => { img.classList.add('book-image'); const src = img.getAttribute('src'); if (src && !/^(https?:|\/)/i.test(src)) img.src = '/api/v1/books/' + book + '/images/' + encodeURIComponent(src.split('/').pop()); }); fragment.append(holder); });
     $('chapter-content').replaceChildren(fragment); $('chapter-content').setAttribute('aria-busy', 'false');
     const landingAtBottom = chapterChanged && pi === 0 && edge === 'bottom';
     if (chapterChanged) jumpReaderScroll(landingAtBottom ? $('reader-scroll').scrollHeight : 0);
@@ -542,12 +542,12 @@ on('reader-scroll','scroll',()=>{
 }
 on('generate-semantic','click',()=>generate({layer:'L3',chapter_idx:state.chapter,mode:'fill_missing',spec_type:$('agent-spec').value}));
 on('toggle-semantic-rail','click',()=>setSemanticVisible(document.body.classList.contains('hide-semantic')));
-document.querySelectorAll('[data-note-layer]').forEach(b => b.onclick = () => openNoteLayer(b.dataset.noteLayer).catch(e => toast(e.message)));
+document.querySelectorAll('[data-note-layer]').forEach(b => b.onclick = () => { const layer=b.dataset.noteLayer; b.blur(); openNoteLayer(layer).catch(e => toast(e.message)); });
 on('edit-note','click',()=>{state.editing=true;renderNote();$('note-editor').focus();});
 on('note-editor','input',()=>{state.dirty=true;$('note-save-state').textContent='未保存';});on('save-note','click',saveNote);
 on('export-note','click',()=>download($('note-editor').value,(state.note?.key||'笔记')+'.md'));
 on('generate-note','click',async()=>{if(!state.note)return;if(state.dirty){toast('请先保存当前笔记，再生成 AI 候选稿');return;}const n=state.note;if(n.layer==='L3')await generate({layer:'L3',paragraph_ref:n.target,mode:'overwrite',spec_type:$('agent-spec').value});else await generate({layer:n.layer,target:n.target,spec_type:$('agent-spec').value});});
-on('note-list-toggle','click',async()=>{const box=$('note-list');box.hidden=!box.hidden;if(box.hidden)return;const [saved,legacy]=await Promise.all([api(base+'/notes'),api('/api/layer/concept_list/'+book)]);box.replaceChildren();saved.items.forEach(n=>box.append(button(n.layer+' · '+(n.target.term||n.content.slice(0,45)||n.key),()=>openNote(n.layer,n.target))));legacy.items.forEach(n=>{const d=el('details');d.append(el('summary','','原有概念 · '+n.term),mdBox(n.content));box.append(d);});if(!box.children.length)box.append(el('p','muted','尚无笔记'));});
+on('note-list-toggle','click',async()=>{const box=$('note-list');box.hidden=!box.hidden;if(box.hidden)return;const [saved,legacy]=await Promise.all([api(base+'/notes'),api('/api/v1/layer/concept_list/'+book)]);box.replaceChildren();saved.items.forEach(n=>box.append(button(n.layer+' · '+(n.target.term||n.content.slice(0,45)||n.key),()=>openNote(n.layer,n.target))));legacy.items.forEach(n=>{const d=el('details');d.append(el('summary','','原有概念 · '+n.term),mdBox(n.content));box.append(d);});if(!box.children.length)box.append(el('p','muted','尚无笔记'));});
 on('refresh-runs','click',refreshRuns);on('new-session','click',newSession);on('sessions','change',()=>{state.session=$('sessions').value;return loadSession();});
 on('rename-session','click',async()=>{if(!state.session)return;const title=prompt('对话名称',$('sessions').selectedOptions[0].text);if(title){await api(chatBase+'/sessions/'+state.session,{title},'PATCH');await sessions(state.session);}});
 on('delete-session','click',async()=>{if(state.session&&confirm('删除此对话及其历史？')){await api(chatBase+'/sessions/'+state.session,undefined,'DELETE');state.session='';await sessions('');if(!state.session){state.messages=[];renderMessages();}}});
@@ -621,6 +621,6 @@ function setSemanticVisible(visible){
 }
 initReadingCycles();
 setSemanticVisible(true);
-async function init(){const settingsLink=$('open-settings');if(settingsLink)settingsLink.href='/settings?from='+encodeURIComponent(location.pathname+location.search+location.hash);initSidebars();if(innerWidth<=800){document.body.classList.add('no-navigation','no-inspector');$('toggle-nav').setAttribute('aria-expanded','false');$('toggle-panel').setAttribute('aria-expanded','false');}const data=await api(base+'/outline');state.nodes=data.items;await nav('outline');const match=location.hash.match(/source=(\d+):(\d+)/);await goto(match?Number(match[1]):state.chapter,match?Number(match[2]):0,false);await sessions();if(cfg.noteMode)await openNote('L1');window.GNOSYS.ready=true;}
+async function init(){const settingsLink=$('open-settings');if(settingsLink)settingsLink.href='/settings?from='+encodeURIComponent(location.pathname+location.search+location.hash);initSidebars();if(innerWidth<=800){document.body.classList.add('no-navigation','no-inspector');$('toggle-nav').setAttribute('aria-expanded','false');$('toggle-panel').setAttribute('aria-expanded','false');}const bookInfo=await api('/api/v1/books/'+book);cfg.title=bookInfo.title;cfg.total=bookInfo.chapter_count;cfg.anchorMap=bookInfo.anchor_map||{};document.title=cfg.title+' · Gnosys';const data=await api(base+'/outline');state.nodes=data.items;await nav('outline');const match=location.hash.match(/source=(\d+):(\d+)/);await goto(match?Number(match[1]):state.chapter,match?Number(match[2]):0,false);await sessions();if(cfg.noteMode)await openNote('L1');window.GNOSYS.ready=true;}
 init().catch(e=>toast(e.message));
 })();

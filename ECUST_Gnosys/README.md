@@ -8,10 +8,10 @@
 
 ```bash
 uv sync
-uv run server.py
+uv run dev.py
 ```
 
-打开 <http://127.0.0.1:8123/>。启动时会检查 8123 端口；若已被占用，会结束占用该端口的进程后继续启动。可以在书库页面上传 EPUB/TXT，也可以从命令行导入 EPUB：
+`dev.py` 会把 Agent 与 Server 作为两个独立进程启动。打开 <http://127.0.0.1:8123/>；Server 启动时会检查端口，若已被占用，会结束占用该端口的进程后继续启动。接口路径、错误格式和事件流见 [API v1 约定](docs/api-v1.md)，Server 的 OpenAPI 文档在 <http://127.0.0.1:8123/docs>。可以在书库页面上传 EPUB/TXT，也可以从命令行导入 EPUB：
 
 ```bash
 uv run backend/reader/import_epub.py "/path/to/book.epub"
@@ -36,6 +36,7 @@ uv run python tools/platform/check_locator.py     # 与现解逐字一致 / 幂�
 
 ```bash
 uv run python tests/test_workspace.py
+uv run python tests/test_agent_service.py
 ```
 
 测试覆盖迁移备份及回滚、EPUB/TXT 导入、坐标与指纹、笔记冲突、四层 Agent、完整上下文覆盖、复核/修订/待核稿、取消/失败/重试、会话历史和恢复。浏览器端到端测试也只用临时书库：

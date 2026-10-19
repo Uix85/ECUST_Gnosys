@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import uuid
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
@@ -24,6 +25,7 @@ from agent.runs.loop import (
     create_layer_run,
     create_run as schedule_run,
 )
+from agent.remote import delete_remote_session
 from reader.workspace import dumps, now
 
 agent_router = APIRouter(prefix="/api/agent/{book_id}/runs", tags=["agent"])
@@ -204,11 +206,14 @@ async def delete_session(book_id: str, session_id: str):
     pending = [task for key, task in list(ACTIVE.items()) if key[:2] == (book_id, session_id)]
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
-    session = sdk_session(book_id, session_id)
-    try:
-        await session.clear_session()
-    finally:
-        session.close()
+    if os.environ.get("GNOSYS_AGENT_MODE", "local") == "http":
+        await delete_remote_session(f"chat:{book_id}:{session_id}")
+    else:
+        session = sdk_session(book_id, session_id)
+        try:
+            await session.clear_session()
+        finally:
+            session.close()
     with db:
         db.execute('DELETE FROM chat_sessions WHERE id=?', (session_id,))
     return {'ok': True}
