@@ -367,7 +367,7 @@ function renderSessionList() {
     list.replaceChildren();
     $('session-count').textContent = state.sessions.length ? state.sessions.length + ' 个对话 · 右键管理' : '尚无对话';
     if (!state.sessions.length) {
-        list.append(el('p', 'session-list-state muted', '还没有对话，点「+ 新对话」开始。'));
+        list.append(el('p', 'session-list-state muted', '还没有对话，在下方输入即可开始。'));
         return;
     }
     for (const session of state.sessions) {
@@ -418,7 +418,7 @@ async function openSession(id) {
 function newSession() {
     // 只开前端草稿；第一次发送成功后才创建数据库会话，避免留下空对话。
     if (chatStream) chatStream.close();
-    state.session=''; state.messages=[]; state.activeMessage='';
+    state.session=''; state.messages=[]; state.activeMessage=''; state.references=[]; renderChips();
     panel('chat'); showThreadView();
     $('chat-session-title').textContent='新对话';
     $('chat-session-meta').textContent='尚未保存';
@@ -753,11 +753,30 @@ async function toggleNoteList() {
     }
 }
 on('note-list-toggle','click',toggleNoteList);
-on('refresh-runs','click',refreshRuns);on('back-to-sessions','click',async()=>{showSessionList();await sessions();});on('new-session','click',newSession);
+on('refresh-runs','click',refreshRuns);on('back-to-sessions','click',async()=>{showSessionList();await sessions();});
 on('rename-session','click',async()=>{const id=menuSessionId;closeSessionMenu();if(!id)return;const item=state.sessions.find(s=>s.id===id);if(!item)return;const title=prompt('对话名称',item.title||'新对话');if(title===null)return;const value=title.trim();if(!value){toast('对话名称不能为空');return;}await api(chatBase+'/sessions/'+id,{title:value},'PATCH');await sessions();if(state.session===id)$('chat-session-title').textContent=value;toast('已重命名');});
 on('delete-session','click',async()=>{const id=menuSessionId;closeSessionMenu();if(!id||!confirm('删除此对话及其历史？'))return;if(state.session===id){if(chatStream)chatStream.close();state.session='';state.messages=[];state.activeMessage='';setChatActive(false);renderMessages();}await api(chatBase+'/sessions/'+id,undefined,'DELETE');await sessions();showSessionList();toast('对话已删除');});
 on('export-chat','click',()=>{if(state.session)location.href=chatBase+'/sessions/'+state.session+'/export';});on('send-chat','click',send);
 on('stop-chat','click',async()=>{if(state.activeMessage)await api(chatBase+'/sessions/'+state.session+'/messages/'+state.activeMessage+'/cancel',{});});
+let startingFromList=false;
+function startDraftFromList(){
+    if(startingFromList)return;
+    const value=$('session-new-input').value;
+    if(!value.trim())return;
+    startingFromList=true;
+    try{
+        $('session-new-input').value='';
+        newSession();
+        const input=$('chat-input');
+        input.value=value;
+        input.dispatchEvent(new Event('input',{bubbles:true}));
+        input.focus();
+        input.setSelectionRange(value.length,value.length);
+    }finally{startingFromList=false;}
+}
+on('session-new-input','input',e=>{if(!e.isComposing)startDraftFromList();});
+on('session-new-input','compositionend',startDraftFromList);
+on('session-new-input','keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing)startDraftFromList();});
 on('chat-input','input',()=>{delete $('chat-input').dataset.requestId;updateMentions();});
 on('chat-input','keydown',e=>{if(e.isComposing)return;if(mention){if(['ArrowDown','ArrowUp'].includes(e.key)){e.preventDefault();mention.index=(mention.index+(e.key==='ArrowDown'?1:-1)+mention.matches.length)%Math.max(1,mention.matches.length);renderMentions();return;}if(e.key==='Escape'){e.preventDefault();closeMentions();return;}if(e.key==='Enter'&&mention.matches.length){e.preventDefault();chooseMention(mention.index);return;}}if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();if(!state.activeMessage)return send();}});
 on('chapter-content','mouseup',captureSelection);on('chapter-content','keyup',captureSelection);
