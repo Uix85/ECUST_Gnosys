@@ -367,7 +367,7 @@ function renderSessionList() {
     list.replaceChildren();
     $('session-count').textContent = state.sessions.length ? state.sessions.length + ' 个对话 · 右键管理' : '尚无对话';
     if (!state.sessions.length) {
-        list.append(el('p', 'session-list-state muted', '还没有对话，在下方输入即可开始。'));
+        list.append(el('p', 'session-list-state muted', '还没有对话，在下方输入并发送即可开始。'));
         return;
     }
     for (const session of state.sessions) {
@@ -758,12 +758,13 @@ on('rename-session','click',async()=>{const id=menuSessionId;closeSessionMenu();
 on('delete-session','click',async()=>{const id=menuSessionId;closeSessionMenu();if(!id||!confirm('删除此对话及其历史？'))return;if(state.session===id){if(chatStream)chatStream.close();state.session='';state.messages=[];state.activeMessage='';setChatActive(false);renderMessages();}await api(chatBase+'/sessions/'+id,undefined,'DELETE');await sessions();showSessionList();toast('对话已删除');});
 on('export-chat','click',()=>{if(state.session)location.href=chatBase+'/sessions/'+state.session+'/export';});on('send-chat','click',send);
 on('stop-chat','click',async()=>{if(state.activeMessage)await api(chatBase+'/sessions/'+state.session+'/messages/'+state.activeMessage+'/cancel',{});});
-let startingFromList=false;
-function startDraftFromList(){
-    if(startingFromList)return;
+let submittingFromList=false;
+async function submitFromList(){
+    if(submittingFromList)return;
     const value=$('session-new-input').value;
     if(!value.trim())return;
-    startingFromList=true;
+    submittingFromList=true;
+    $('session-new-send').disabled=true;
     try{
         $('session-new-input').value='';
         newSession();
@@ -772,11 +773,15 @@ function startDraftFromList(){
         input.dispatchEvent(new Event('input',{bubbles:true}));
         input.focus();
         input.setSelectionRange(value.length,value.length);
-    }finally{startingFromList=false;}
+        await send();
+    }finally{
+        submittingFromList=false;
+        $('session-new-send').disabled=!$('session-new-input').value.trim();
+    }
 }
-on('session-new-input','input',e=>{if(!e.isComposing)startDraftFromList();});
-on('session-new-input','compositionend',startDraftFromList);
-on('session-new-input','keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing)startDraftFromList();});
+on('session-new-input','input',()=>{$('session-new-send').disabled=!$('session-new-input').value.trim();});
+on('session-new-input','keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();submitFromList().catch(error=>toast(error.message));}});
+on('session-new-send','click',submitFromList);
 on('chat-input','input',()=>{delete $('chat-input').dataset.requestId;updateMentions();});
 on('chat-input','keydown',e=>{if(e.isComposing)return;if(mention){if(['ArrowDown','ArrowUp'].includes(e.key)){e.preventDefault();mention.index=(mention.index+(e.key==='ArrowDown'?1:-1)+mention.matches.length)%Math.max(1,mention.matches.length);renderMentions();return;}if(e.key==='Escape'){e.preventDefault();closeMentions();return;}if(e.key==='Enter'&&mention.matches.length){e.preventDefault();chooseMention(mention.index);return;}}if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();if(!state.activeMessage)return send();}});
 on('chapter-content','mouseup',captureSelection);on('chapter-content','keyup',captureSelection);
