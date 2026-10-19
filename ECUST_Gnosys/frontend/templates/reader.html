@@ -93,5 +93,11 @@
 <div id="selection-actions" class="selection-actions" hidden><button id="selection-chat">加入对话</button><button id="selection-concept">解释概念</button><button id="selection-semantic">语义笔记</button></div>
 <div id="toast" role="status" hidden></div>
 <script>window.GNOSYS = {bookId: {{ book_id|tojson }}, chapter: {{ chapter_idx }}, total: 0, title: '', noteMode: {{ note_mode|default(false)|tojson }}, anchorMap: {}};</script>
-<script src="/static/js/workspace.js?v={{ asset_version() }}" defer></script>
+<script src="/static/js/workspace/core.js?v={{ asset_version() }}" defer></script>
+<script src="/static/js/workspace/layout.js?v={{ asset_version() }}" defer></script>
+<script src="/static/js/workspace/reader.js?v={{ asset_version() }}" defer></script>
+<script src="/static/js/workspace/notes.js?v={{ asset_version() }}" defer></script>
+<script src="/static/js/workspace/agent.js?v={{ asset_version() }}" defer></script>
+<script src="/static/js/workspace/chat.js?v={{ asset_version() }}" defer></script>
+<script src="/static/js/workspace/main.js?v={{ asset_version() }}" defer></script>
 </body></html>

@@ -4,6 +4,7 @@ ECUST_Reader3 —— FastAPI 阅读服务器（应用入口与书库路由）。
 阅读器、Agent、数据库模块分别归入 reader/、agent/ 和 db/。
 """
 
+import glob
 import os
 import shutil
 import tempfile
@@ -51,8 +52,8 @@ def _asset_version():
     """静态资源内容一改，查询串就变，避免浏览器继续用旧 JS/CSS。"""
     paths = [
         os.path.join(STATIC_DIR, "css", "workspace.css"),
-        os.path.join(STATIC_DIR, "js", "workspace.js"),
         os.path.join(STATIC_DIR, "js", "markdown_render.js"),
+        *glob.glob(os.path.join(STATIC_DIR, "js", "workspace", "*.js")),
     ]
     return str(max((os.stat(p).st_mtime_ns for p in paths if os.path.exists(p)), default=0))
 

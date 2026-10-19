@@ -32,7 +32,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    FE[frontend/static/js/workspace.js] --> API[POST /api/agent/{book_id}/runs]
+    FE[frontend/static/js/workspace/] --> API[POST /api/agent/{book_id}/runs]
     API --> ROUTE[agent.api.create_run]
     ROUTE --> SCHED[agent.runs.loop.create_run]
     SCHED --> PREP[agent.layers.l3_paragraph.prepare_run<br/>校验范围、建立 run/task 记录]
@@ -70,7 +70,7 @@ L4 创建任务前还会调用 `layers.l4_selection.gate` 清理/校验选中的
 
 ```mermaid
 flowchart TD
-    FE[workspace.js] --> API[POST /api/chat/{book_id}/sessions/{session_id}/messages]
+    FE[workspace/] --> API[POST /api/chat/{book_id}/sessions/{session_id}/messages]
     API --> START[agent.api.send]
     START --> CREATE[agent.chat.start_message<br/>校验、写入 user/assistant 消息]
     CREATE --> BG[asyncio.create_task(agent.chat.answer)]
