@@ -530,6 +530,8 @@ const SIDEBARS = {
 };
 const READING_MIN_WIDTH = 320;
 const sidebarWidths = {nav:0, inspector:0};
+const mobileLayoutQuery = window.matchMedia('(max-width: 800px)');
+let mobileLayout = mobileLayoutQuery.matches;
 function pageWidth() { return document.documentElement.clientWidth || window.innerWidth; }
 function sidebarMinWidth() { return Math.max(1,Math.ceil(pageWidth()/50)); }
 function sidebarMaxWidth() {
@@ -557,6 +559,21 @@ function syncSidebarHandles() {
             applySidebarWidth(kind,width,false);
         }
     }
+}
+function applyResponsiveLayout(force = false) {
+    const mobile = mobileLayoutQuery.matches;
+    if (!force && mobile === mobileLayout) return;
+    mobileLayout = mobile;
+    if (mobile) {
+        document.body.classList.add('no-navigation', 'no-inspector');
+        $('toggle-nav').setAttribute('aria-expanded', 'false');
+        $('toggle-panel').setAttribute('aria-expanded', 'false');
+    } else {
+        document.body.classList.remove('no-navigation', 'no-inspector');
+        $('toggle-nav').setAttribute('aria-expanded', 'true');
+        $('toggle-panel').setAttribute('aria-expanded', 'true');
+    }
+    syncSidebarHandles();
 }
 function setSidebarVisible(kind,visible) {
     const cfg=SIDEBARS[kind],panel=$(cfg.panel),toggle=$(cfg.toggle);if(!panel)return;
@@ -613,6 +630,9 @@ function initSidebars() {
         });
     }
     window.addEventListener('resize',syncSidebarHandles);
+    window.addEventListener('resize',()=>applyResponsiveLayout());
+    if(mobileLayoutQuery.addEventListener)mobileLayoutQuery.addEventListener('change',()=>applyResponsiveLayout());
+    else if(mobileLayoutQuery.addListener)mobileLayoutQuery.addListener(()=>applyResponsiveLayout());
     syncSidebarHandles();
 }
 // Shared navigation for evidence links emitted by the model and generated notes.
@@ -792,6 +812,6 @@ function setSemanticVisible(visible){
 }
 initReadingCycles();
 setSemanticVisible(true);
-async function init(){const settingsLink=$('open-settings');if(settingsLink)settingsLink.href='/settings?from='+encodeURIComponent(location.pathname+location.search+location.hash);initSidebars();if(innerWidth<=800){document.body.classList.add('no-navigation','no-inspector');$('toggle-nav').setAttribute('aria-expanded','false');$('toggle-panel').setAttribute('aria-expanded','false');}const data=await api(base+'/outline');state.nodes=data.items;await nav('outline');const match=location.hash.match(/source=(\d+):(\d+)/);await goto(match?Number(match[1]):state.chapter,match?Number(match[2]):0,false);await sessions();showSessionList();if(cfg.noteMode)await openNote('L1');window.GNOSYS.ready=true;}
+async function init(){const settingsLink=$('open-settings');if(settingsLink)settingsLink.href='/settings?from='+encodeURIComponent(location.pathname+location.search+location.hash);initSidebars();applyResponsiveLayout(true);const data=await api(base+'/outline');state.nodes=data.items;await nav('outline');const match=location.hash.match(/source=(\d+):(\d+)/);await goto(match?Number(match[1]):state.chapter,match?Number(match[2]):0,false);await sessions();showSessionList();if(cfg.noteMode)await openNote('L1');window.GNOSYS.ready=true;}
 init().catch(e=>toast(e.message));
 })();
