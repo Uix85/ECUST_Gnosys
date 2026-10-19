@@ -124,6 +124,20 @@ app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=1)
 
 # 产品版本：按修改程度手动递增；书库页右下角展示。
 APP_VERSION = "Beta 1.0"
+CHANGELOG = [
+    {
+        "version": "Beta 1.0",
+        "date": "2026-10-19",
+        "changes": [
+            "API 分离：Server / Agent 独立运行，前端统一使用 /api/v1",
+            "前端重做：书库、阅读器、四层笔记、对话与设置页",
+            "搜索：命中句高亮、跨章跳转、内存 bigram 索引",
+            "修复：会话草稿隔离、笔记保存、移动端侧栏、设置返回安全",
+            "工程：workspace.js 拆分为 core/layout/reader/notes/agent/chat/main",
+            "书库页版本号可点击查看更新日志",
+        ],
+    },
+]
 
 # 书库置顶书籍（按目录 id 匹配，顺序即显示顺序；其余书籍保持原顺序）
 PINNED_BOOK_IDS = [
@@ -134,7 +148,10 @@ PINNED_BOOK_IDS = [
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def library_view(request: Request):
     """书库页面只返回静态壳；书目由版本化 API 提供。"""
-    return templates.TemplateResponse(request, "library.html", {"app_version": APP_VERSION})
+    return templates.TemplateResponse(request, "library.html", {
+        "app_version": APP_VERSION,
+        "changelog": CHANGELOG,
+    })
 
 
 # ── 设置页：读写 database/settings.db ──
