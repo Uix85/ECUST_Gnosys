@@ -5,7 +5,7 @@
 <input type="file" id="book-file" accept=".epub,.txt" hidden><div id="upload-status" role="status" class="muted"></div>
 <div class="book-grid" id="book-grid"></div>
 <div class="library-empty" id="library-empty" hidden><h2>在这里开始一本书</h2><p>导入 EPUB 或 TXT，阅读进度和笔记会保存在本机。</p></div>
-<p id="no-results" class="library-empty" hidden>没有匹配的书籍</p><div id="toast" role="status" hidden></div></main>
+<p id="no-results" class="library-empty" hidden>没有匹配的书籍</p><div id="toast" role="status" hidden></div></main><button id="app-version" class="app-version" type="button" title="查看更新日志" aria-haspopup="dialog" aria-controls="changelog-dialog">{{ app_version }}</button><dialog id="changelog-dialog" class="changelog-dialog" aria-labelledby="changelog-title"><header class="changelog-head"><h2 id="changelog-title">更新日志</h2><button id="changelog-close" class="changelog-close" type="button" aria-label="关闭更新日志">×</button></header><div class="changelog-list">{% for entry in changelog %}<section class="changelog-entry"><div class="changelog-version">{{ entry.version }} <time>{{ entry.date }}</time></div><ul>{% for change in entry.changes %}<li>{{ change }}</li>{% endfor %}</ul></section>{% endfor %}</div></dialog>
 <script>
 const input=document.getElementById('book-file'),trigger=document.getElementById('import-book'),status=document.getElementById('upload-status');
 const grid=document.getElementById('book-grid'),search=document.getElementById('library-search'),empty=document.getElementById('library-empty');
@@ -16,4 +16,16 @@ function bindDelete(button){button.onclick=async()=>{if(!confirm('删除《'+but
 function renderBooks(items){grid.replaceChildren();items.forEach(book=>{const card=document.createElement('article');card.className='book-card';card.dataset.search=(book.title+' '+book.author).toLowerCase();const body=document.createElement('div');body.className='book-card-body';const title=document.createElement('h2');title.textContent=book.title;const author=document.createElement('p');author.textContent=book.author||'作者未标注';const actions=document.createElement('div');actions.className='book-actions';const open=document.createElement('a');open.href='/read/'+encodeURIComponent(book.id);open.textContent='继续阅读';const remove=document.createElement('button');remove.className='delete-book danger';remove.dataset.book=book.id;remove.dataset.title=book.title;remove.textContent='删除';bindDelete(remove);actions.append(open,remove);body.append(title,author,actions);card.append(body);grid.append(card);});updateCount();}
 search.oninput=e=>{const query=e.target.value.toLowerCase();grid.querySelectorAll('.book-card').forEach(card=>card.hidden=!card.dataset.search.includes(query));updateCount();};
 fetch('/api/v1/books').then(async r=>{const data=await r.json();if(!r.ok)throw new Error(data.error?.message||data.detail);renderBooks(data.items);}).catch(e=>{status.textContent=e.message;});
+</script><script>
+(function(){
+ const trigger=document.getElementById('app-version'),dialog=document.getElementById('changelog-dialog');
+ if(!trigger||!dialog)return;
+ trigger.addEventListener('click',()=>{
+  const selection=window.getSelection();
+  if(selection&&!selection.isCollapsed&&trigger.contains(selection.anchorNode))return;
+  if(!dialog.open)dialog.showModal();
+ });
+ document.getElementById('changelog-close')?.addEventListener('click',()=>dialog.close());
+ dialog.addEventListener('click',event=>{if(event.target===dialog)dialog.close();});
+})();
 </script></body></html>

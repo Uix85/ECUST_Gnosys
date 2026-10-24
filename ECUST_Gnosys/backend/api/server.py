@@ -4,6 +4,7 @@ ECUST_Reader3 —— FastAPI 阅读服务器（应用入口与书库路由）。
 阅读器、Agent、数据库模块分别归入 reader/、agent/ 和 db/。
 """
 
+import glob
 import os
 import shutil
 import tempfile
@@ -51,8 +52,8 @@ def _asset_version():
     """静态资源内容一改，查询串就变，避免浏览器继续用旧 JS/CSS。"""
     paths = [
         os.path.join(STATIC_DIR, "css", "workspace.css"),
-        os.path.join(STATIC_DIR, "js", "workspace.js"),
         os.path.join(STATIC_DIR, "js", "markdown_render.js"),
+        *glob.glob(os.path.join(STATIC_DIR, "js", "workspace", "*.js")),
     ]
     return str(max((os.stat(p).st_mtime_ns for p in paths if os.path.exists(p)), default=0))
 
@@ -121,6 +122,24 @@ app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=1)
 # HTTP 路由
 # ═══════════════════════════════════════════
 
+# 产品版本：按修改程度手动递增；书库页右下角展示。
+APP_VERSION = "Beta 1.0"
+CHANGELOG = [
+    {
+        "version": "Beta 1.0",
+        "date": "2026-10-19",
+        "changes": [
+            "API 分离：Server / Agent 独立运行，前端统一使用 /api/v1",
+            "前端重做：书库、阅读器、四层笔记、对话与设置页",
+            "搜索：命中句高亮、跨章跳转、内存 bigram 索引",
+            "修复：会话草稿隔离、笔记保存、移动端侧栏、设置返回安全",
+            "工程：workspace.js 拆分为 core/layout/reader/notes/agent/chat/main",
+            "书库页版本号可点击查看更新日志",
+            "对话标题支持双击重命名",
+        ],
+    },
+]
+
 # 书库置顶书籍（按目录 id 匹配，顺序即显示顺序；其余书籍保持原顺序）
 PINNED_BOOK_IDS = [
     "精神现象学 黑格尔着 (精神现象学 黑格尔着.txt) (z-library.sk, 1lib.sk, z-lib.sk)_data",
@@ -130,7 +149,10 @@ PINNED_BOOK_IDS = [
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def library_view(request: Request):
     """书库页面只返回静态壳；书目由版本化 API 提供。"""
-    return templates.TemplateResponse(request, "library.html", {})
+    return templates.TemplateResponse(request, "library.html", {
+        "app_version": APP_VERSION,
+        "changelog": CHANGELOG,
+    })
 
 
 # ── 设置页：读写 database/settings.db ──
